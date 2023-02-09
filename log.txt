@@ -1,0 +1,5 @@
+INFO:root:Initializing game for test 0 out of 1
+INFO:root:The game has 25 agents; 10 opt. variables per agent; 10 Local ineq. constraints; 1 local eq. constraints; 10 shared ineq. constraints
+INFO:root:Tichonov: Iteration 0 Residual: 2.545080025888513e-09 Sel function: 3.1207931303941607 Average time: 0.030786991119384766
+INFO:root:HSDM: Iteration 0 Residual: 2.545080024525404e-09 Sel function: 3.1207931303941607 Average time: 0.017132043838500977
+INFO:root:FBF: Iteration 0 Residual: 0.15811388321559414 Sel function: 3.1207931303941607 Average time: 0.03097701072692871
