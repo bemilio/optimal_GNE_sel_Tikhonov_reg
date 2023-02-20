@@ -9,44 +9,42 @@ from GameDefinition import Game
 import time
 import logging
 
-
-def set_stepsizes(N, road_graph, A_ineq_shared, xi, algorithm='FRB'):
-    theta = 0
-    c = road_graph.edges[(0, 1)]['capacity']
-    tau = road_graph.edges[(0, 1)]['travel_time']
-    zeta = road_graph.edges[(0, 1)]['uncontrolled_traffic']
-    k = 0.15 * tau / (c**xi)
-    L = (2*k/N)* ((N+1) + (1 + zeta)**(xi-1) + (xi-1 * (1+zeta)**(xi-2)) )
-    if algorithm == 'FRB':
-        delta = 2*L / (1-3*theta)
-        eigval, eigvec = torch.linalg.eig(torch.bmm(A_ineq_shared, torch.transpose(A_ineq_shared, 1, 2)))
-        eigval = torch.real(eigval)
-        alpha = 0.5/((torch.max(torch.max(eigval, 1)[0])) + delta)
-        beta = N * 0.5/(torch.sum(torch.max(eigval, 1)[0]) + delta)
-    if algorithm == 'FBF':
-        eigval, eigvec = torch.linalg.eig(torch.sum(torch.bmm(A_ineq_shared, torch.transpose(A_ineq_shared, 1, 2)), 0)  )
-        eigval = torch.real(eigval)
-        alpha = 0.5/(L+torch.max(eigval))
-        beta = 0.5/(L+torch.max(eigval))
-    return (alpha.item(), beta.item(), theta)
-
-
-
 if __name__ == '__main__':
     logging.basicConfig(filename='log.txt', filemode='w',level=logging.DEBUG)
-
-    np.random.seed(1)
-    N_iter=100
-    N_it_per_residual_computation = 100
+    use_test_game = False  # trigger 2-players sample zero-sum monotone game
+    if use_test_game:
+        print("WARNING: test game will be used.")
+        logging.info("WARNING: test game will be used.")
+    np.random.seed(2)
+    N_iter=100000
+    N_it_per_residual_computation = 10
     N_agents = 25
     n_channels = 10
     n_neighbors = 6 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
-    P_max_shared = 10 # Max power that can go on a channel
-    P_max_local = torch.ones(N_agents,1) # Max power that each agent can output (cumulative on all channels)
+    P_max_shared = 3 # Max power that can go on a channel
+    P_max_local = torch.ones(N_agents,1) # Max power that each agent can output (cumulative on all channels).
+                                         # By the reformulation of Scutari, this is used in en EQUALITY constraint
+                                         # (so the power output is = P_max)
+    if P_max_shared < torch.sum(P_max_local).item()/n_channels:
+        raise ValueError("The shared constraint is infeasible: increase power allowed on each channel")
     N_random_tests = 1
     n_taps = 10 # order of the filters
     is_connected = False
     comm_graph = nx.random_regular_graph(n_neighbors, N_agents)
+
+    ##########################################
+    #  Define alg. parameters to test        #
+    ##########################################
+    exponent_sel_fun_to_test = [.6, .8, 1.] # The selection function weight decades as 1/k^exp
+    tichonov_inertia_to_test = [.1, 1, 10] # weight that multiplies \|x-x_k\| in the tich. reg. problem
+    tichonov_epsilon_wrt_sel_fun_to_test = [2, 5, 10] # The approx. error in the tich.reg. problem evolves as 1/k^(p*exp), where p is this parameter and exp is the first parameter
+    parameters_to_test=[]
+    for par_1 in exponent_sel_fun_to_test:
+        for par_2 in tichonov_inertia_to_test:
+            for par_3 in tichonov_epsilon_wrt_sel_fun_to_test:
+                parameters_to_test.append((par_1,par_2,par_3))
+    N_parameters_to_test = len(parameters_to_test)
+
     for test in range(N_random_tests):
         ##########################################
         #        Test case creation              #
@@ -68,116 +66,122 @@ if __name__ == '__main__':
         game = Game(N_agents, n_channels, comm_graph, 0*game_params.Q , 0*game_params.c,
                     game_params.A_eq_loc_const, game_params.A_ineq_loc_const, game_params.A_ineq_shared,
                     game_params.b_eq_loc_const, game_params.b_ineq_loc_const, game_params.b_ineq_shared,
-                    Q_sel=game_params.Q_sel_fun, c_sel=game_params.c_sel_fun)
+                    Q_sel=game_params.Q_sel_fun, c_sel=game_params.c_sel_fun, test=use_test_game)
         if test == 0:
-
-            print("The game has " + str(N_agents) + " agents; " + str(game.n_opt_variables) + " opt. variables per agent; " \
+            print("The game has " + str(game.N_agents) + " agents; " + str(game.n_opt_variables) + " opt. variables per agent; " \
                   + str(game.A_ineq_loc.size()[1]) + " Local ineq. constraints; " + str(game.A_eq_loc.size()[1]) + " local eq. constraints; " + str(game.n_shared_ineq_constr) + " shared ineq. constraints" )
-            logging.info("The game has " + str(N_agents) + " agents; " + str(game.n_opt_variables) + " opt. variables per agent; " \
+            logging.info("The game has " + str(game.N_agents) + " agents; " + str(game.n_opt_variables) + " opt. variables per agent; " \
                   + str(game.A_ineq_loc.size()[1]) + " Local ineq. constraints; " + str(game.A_eq_loc.size()[1]) + " local eq. constraints; " + str(game.n_shared_ineq_constr) + " shared ineq. constraints" )
             ##########################################
             #   Variables storage inizialization     #
             ##########################################
             # pFB-Tichonov
-            x_store_tich = torch.zeros(N_random_tests, N_agents, game.n_opt_variables)
-            dual_store_tich = torch.zeros(N_random_tests, N_agents, game.n_shared_ineq_constr)
-            aux_store_tich = torch.zeros(N_random_tests, N_agents, game.n_shared_ineq_constr)
-            residual_store_tich = torch.zeros(N_random_tests, N_iter // N_it_per_residual_computation)
-            local_cost_store_tich = torch.zeros(N_random_tests, N_agents, N_iter // N_it_per_residual_computation)
-            sel_func_store_tich = torch.zeros(N_random_tests, N_iter // N_it_per_residual_computation)
+            x_store_tich = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_opt_variables)
+            dual_store_tich = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_shared_ineq_constr)
+            aux_store_tich = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_shared_ineq_constr)
+            residual_store_tich = torch.zeros(N_random_tests, N_parameters_to_test, N_iter // N_it_per_residual_computation)
+            local_cost_store_tich = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, N_iter // N_it_per_residual_computation)
+            sel_func_store_tich = torch.zeros(N_random_tests, N_parameters_to_test, N_iter // N_it_per_residual_computation)
             # FBF-HSDM
-            x_store_hsdm = torch.zeros(N_random_tests, N_agents, game.n_opt_variables)
-            dual_store_hsdm = torch.zeros(N_random_tests, N_agents, game.n_shared_ineq_constr)
-            aux_store_hsdm = torch.zeros(N_random_tests, N_agents, game.n_shared_ineq_constr)
-            residual_store_hsdm = torch.zeros(N_random_tests, N_iter // N_it_per_residual_computation)
-            local_cost_store_hsdm = torch.zeros(N_random_tests, N_agents, N_iter // N_it_per_residual_computation)
-            sel_func_store_hsdm = torch.zeros(N_random_tests, N_iter // N_it_per_residual_computation)
+            x_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_opt_variables)
+            dual_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_shared_ineq_constr)
+            aux_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_shared_ineq_constr)
+            residual_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test, N_iter // N_it_per_residual_computation)
+            local_cost_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, N_iter // N_it_per_residual_computation)
+            sel_func_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test, N_iter // N_it_per_residual_computation)
             # FBF
-            x_store_std = torch.zeros(N_random_tests, N_agents, game.n_opt_variables)
-            dual_store_std = torch.zeros(N_random_tests, N_agents, game.n_shared_ineq_constr)
-            aux_store_std = torch.zeros(N_random_tests, N_agents, game.n_shared_ineq_constr)
-            residual_store_std = torch.zeros(N_random_tests, N_iter // N_it_per_residual_computation)
-            local_cost_store_std = torch.zeros(N_random_tests, N_agents, N_iter // N_it_per_residual_computation)
-            sel_func_store_std = torch.zeros(N_random_tests, N_iter // N_it_per_residual_computation)
-            # [alpha, beta, theta] = set_stepsizes(N_agents, game.A_ineq_shared, xi, algorithm='FRB')
-            ##########################################
-            #          Algorithm inizialization      #
-            ##########################################
-            alg_tich = pFB_tich_prox_distr_algorithm(game, primal_stepsize=0.1, dual_stepsize=0.1,
-                                                     consensus_stepsize=0.1,
-                                                     exponent_vanishing_precision=2, exponent_vanishing_selection=1,
-                                                     alpha_tich_regul=1)
-            alg_hsdm = pFB_tich_prox_distr_algorithm(game, primal_stepsize=0.1, dual_stepsize=0.1,
-                                                     consensus_stepsize=0.1, exponent_vanishing_selection=1)
-            alg_std = FBF_distr_algorithm(game, primal_stepsize=0.1, dual_stepsize=0.1, consensus_stepsize=0.1)
-        index_store = 0
-        avg_time_per_it_tich = 0
-        avg_time_per_it_hsdm = 0
-        avg_time_per_it_std = 0
-        for k in range(N_iter):
-            ##########################################
-            #             Algorithm run              #
-            ##########################################
-            start_time = time.time()
-            alg_tich.run_once()
-            end_time = time.time()
-            avg_time_per_it_tich = (avg_time_per_it_tich * k + (end_time - start_time)) / (k + 1)
-            start_time = time.time()
-            alg_hsdm.run_once()
-            end_time = time.time()
-            avg_time_per_it_hsdm = (avg_time_per_it_hsdm * k + (end_time - start_time)) / (k + 1)
-            start_time = time.time()
-            alg_std.run_once()
-            end_time = time.time()
-            avg_time_per_it_std = (avg_time_per_it_std * k + (end_time - start_time)) / (k + 1)
-            if k % N_it_per_residual_computation == 0:
+            x_store_std = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_opt_variables)
+            dual_store_std = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_shared_ineq_constr)
+            aux_store_std = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, game.n_shared_ineq_constr)
+            residual_store_std = torch.zeros(N_random_tests, N_parameters_to_test, N_iter // N_it_per_residual_computation)
+            local_cost_store_std = torch.zeros(N_random_tests, N_parameters_to_test, game.N_agents, N_iter // N_it_per_residual_computation)
+            sel_func_store_std = torch.zeros(N_random_tests, N_parameters_to_test, N_iter // N_it_per_residual_computation)
+        ##########################################
+        #          Algorithm inizialization      #
+        ##########################################
+        for index_parameter_set in range(len(parameters_to_test)):
+            parameter_set = parameters_to_test[index_parameter_set]
+            x_0 = torch.zeros(game.N_agents, game.n_opt_variables, 1) #torch.from_numpy(np.random.rand(game.N_agents, game.n_opt_variables, 1))
+
+            alg_tich = pFB_tich_prox_distr_algorithm(game, x_0=x_0,
+                                                     exponent_vanishing_precision=parameter_set[2]*parameter_set[0],
+                                                     exponent_vanishing_selection=parameter_set[0],
+                                                     alpha_tich_regul=parameter_set[1])
+            alg_tich.set_stepsize_using_Lip_const(safety_margin=.5)
+            alg_hsdm = FBF_HSDM_distr_algorithm(game, x_0=x_0, exponent_vanishing_selection=parameter_set[0])
+            alg_hsdm.set_stepsize_using_Lip_const(safety_margin=.5)
+            alg_std = FBF_distr_algorithm(game, x_0=x_0)
+            alg_std.set_stepsize_using_Lip_const(safety_margin=.5)
+
+            index_storage = 0
+            avg_time_per_it_tich = 0
+            avg_time_per_it_hsdm = 0
+            avg_time_per_it_std = 0
+            for k in range(N_iter):
                 ##########################################
-                #          Save performance metrics      #
+                #             Algorithm run              #
                 ##########################################
-                # Tichonov
-                x, d, a, r, c, s  = alg_tich.get_state()
-                residual_store_tich[test, index_store] = r
-                sel_func_store_tich[test, index_store] = s
-                print("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +  " Average time: " + str(avg_time_per_it_tich))
-                logging.info("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +" Average time: " + str(avg_time_per_it_tich))
-                # HSDM
-                x, d, a, r, c, s = alg_hsdm.get_state()
-                residual_store_hsdm[test, index_store] = r
-                sel_func_store_hsdm[test, index_store] = s
-                print("HSDM: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
-                    s.item()) + " Average time: " + str(avg_time_per_it_hsdm))
-                logging.info("HSDM: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
-                    s.item()) + " Average time: " + str(avg_time_per_it_hsdm))
-                # FBF
-                x, d, a, r, c = alg_std.get_state()
-                residual_store_std[test, index_store] = r
-                sel_func_store_std[test, index_store] = game.phi(x)
-                print("FBF: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
-                    s.item()) + " Average time: " + str(avg_time_per_it_std))
-                logging.info("FBF: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
-                    s.item()) + " Average time: " + str(avg_time_per_it_std))
-                index_store = index_store + 1
+                start_time = time.time()
+                alg_tich.run_once()
+                end_time = time.time()
+                avg_time_per_it_tich = (avg_time_per_it_tich * k + (end_time - start_time)) / (k + 1)
+                start_time = time.time()
+                alg_hsdm.run_once()
+                end_time = time.time()
+                avg_time_per_it_hsdm = (avg_time_per_it_hsdm * k + (end_time - start_time)) / (k + 1)
+                start_time = time.time()
+                alg_std.run_once()
+                end_time = time.time()
+                avg_time_per_it_std = (avg_time_per_it_std * k + (end_time - start_time)) / (k + 1)
+                if k % N_it_per_residual_computation == 0:
+                    ##########################################
+                    #          Save performance metrics      #
+                    ##########################################
+                    # Tichonov
+                    x, d, a, r, c, s  = alg_tich.get_state()
+                    residual_store_tich[test, index_parameter_set, index_storage] = r
+                    sel_func_store_tich[test, index_parameter_set, index_storage] = s
+                    print("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +  " Average time: " + str(avg_time_per_it_tich))
+                    logging.info("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +" Average time: " + str(avg_time_per_it_tich))
+                    # HSDM
+                    x, d, a, r, c, s = alg_hsdm.get_state()
+                    residual_store_hsdm[test, index_parameter_set, index_storage] = r
+                    sel_func_store_hsdm[test, index_parameter_set, index_storage] = s
+                    print("HSDM: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
+                        s.item()) + " Average time: " + str(avg_time_per_it_hsdm))
+                    logging.info("HSDM: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
+                        s.item()) + " Average time: " + str(avg_time_per_it_hsdm))
+                    # FBF
+                    x, d, a, r, c = alg_std.get_state()
+                    s = game.phi(x)
+                    residual_store_std[test, index_parameter_set, index_storage] = r
+                    sel_func_store_std[test, index_parameter_set, index_storage] = game.phi(x)
+                    print("FBF: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
+                        s.item()) + " Average time: " + str(avg_time_per_it_std))
+                    logging.info("FBF: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
+                        s.item()) + " Average time: " + str(avg_time_per_it_std))
+                    index_storage = index_storage + 1
 
         ##########################################
         #          Store final results           #
         ##########################################
         x, d, a, r, c, s = alg_tich.get_state()
-        x_store_tich[test, :, :] = x.flatten(1)
-        dual_store_tich[test, :,:] = d.flatten(1)
-        aux_store_tich[test, :, :] = a.flatten(1)
-        local_cost_store_tich[test, :, :] = c.flatten(1)
+        x_store_tich[test, index_parameter_set, :, :] = x.flatten(1)
+        dual_store_tich[test, index_parameter_set, :,:] = d.flatten(1)
+        aux_store_tich[test, index_parameter_set, :, :] = a.flatten(1)
+        local_cost_store_tich[test, index_parameter_set, :, :] = c.flatten(1)
         # HSDM
         x, d, a, r, c, s = alg_hsdm.get_state()
-        x_store_hsdm[test, :, :] = x.flatten(1)
-        dual_store_hsdm[test, :, :] = d.flatten(1)
-        aux_store_hsdm[test, :, :] = a.flatten(1)
-        local_cost_store_hsdm[test, :, :] = c.flatten(1)
+        x_store_hsdm[test, index_parameter_set, :, :] = x.flatten(1)
+        dual_store_hsdm[test, index_parameter_set, :, :] = d.flatten(1)
+        aux_store_hsdm[test, index_parameter_set, :, :] = a.flatten(1)
+        local_cost_store_hsdm[test, index_parameter_set, :, :] = c.flatten(1)
         # FBF
         x, d, a, r, c = alg_std.get_state()
-        x_store_std[test, :, :] = x.flatten(1)
-        dual_store_std[test, :, :] = d.flatten(1)
-        aux_store_std[test, :, :] = a.flatten(1)
-        local_cost_store_std[test, :, :] = c.flatten(1)
+        x_store_std[test, index_parameter_set, :, :] = x.flatten(1)
+        dual_store_std[test, index_parameter_set, :, :] = d.flatten(1)
+        aux_store_std[test, index_parameter_set, :, :] = a.flatten(1)
+        local_cost_store_std[test, index_parameter_set, :, :] = c.flatten(1)
 
     print("Saving results...")
     logging.info("Saving results...")
@@ -186,7 +190,8 @@ if __name__ == '__main__':
                  dual_store_tich, dual_store_hsdm, dual_store_std,
                  aux_store_tich, aux_store_hsdm, aux_store_std,
                  residual_store_tich, residual_store_hsdm, residual_store_std,
-                 sel_func_store_tich, sel_func_store_hsdm, sel_func_store_std ], f)
+                 sel_func_store_tich, sel_func_store_hsdm, sel_func_store_std,
+                 parameters_to_test], f)
     f.close()
     print("Saved")
     logging.info("Saved, job done")

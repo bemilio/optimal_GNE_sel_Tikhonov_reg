@@ -47,7 +47,7 @@ class pFB_tich_prox_distr_algorithm:
         aux_new = aux - self.consensus_stepsize * self.game.K(dual)
         d = 2 * torch.bmm(A_i, x_new) - torch.bmm(A_i, x) - b_i
         # Dual update
-        dual_new = torch.maximum(dual + self.dual_stepsize * ( d + self.game.K(2*aux_new - aux) + self.game.K(dual)), torch.zeros(dual.size()))
+        dual_new = torch.maximum(dual + self.dual_stepsize * ( d + self.game.K(2*aux_new - aux) - self.game.K(dual)), torch.zeros(dual.size()))
         if torch.norm(x-x_new) + torch.norm(dual-dual_new) + torch.norm(aux-aux_new) <= self.eps_tich(self.outer_iter):
             self.outer_iter = self.outer_iter + 1
             self.x_pivot = x_new
@@ -70,11 +70,24 @@ class pFB_tich_prox_distr_algorithm:
         residual = np.sqrt( ((x - x_transformed).norm())**2 + ((self.dual-dual_transformed).norm())**2 )
         return residual
 
+    def set_stepsize_using_Lip_const(self, safety_margin=.5):
+        #compute stepsizes as (1/L)*safety_margin, where L is the lipschitz constant of the forward operator
+        N = self.x.size(0)
+        n_x = self.x.size(1)
+        n_constr = self.game.A_ineq_shared.size(1)
+        mu_pseudog, Lip_pseudog = self.game.F.get_strMon_Lip_constants()
+        mu_sel_fun, Lip_sel_fun = self.game.phi.get_strMon_Lip_constants()
+        str_mon = mu_sel_fun + self.alpha_tich_regul + mu_pseudog
+        max_neigh = max([torch.abs(self.game.K.L[i, i, 0, 0]).item() for i in range(N)]) # The diagonal of the Laplacian matrix contains the node degree
+        max_A = torch.max(torch.sum(torch.abs(self.game.A_ineq_shared),dim=2)).item()
+        delta = (1/(safety_margin*min( str_mon, (2/max_neigh)) ) )
+        self.primal_stepsize = 1/(max_A * delta)
+        self.dual_stepsize = 1 / (max_A + 2*max_neigh + delta)
+        self.consensus_stepsize = 1 / ( 2 * max_neigh + delta)
 
 class FBF_HSDM_distr_algorithm:
     def __init__(self, game, x_0=None, dual_0=None, aux_0=None,
-                 primal_stepsize=0.001, dual_stepsize=0.001, consensus_stepsize=0.001,
-                 exponent_vanishing_selection=1):
+                 primal_stepsize=0.001, dual_stepsize=0.001, consensus_stepsize=0.001, exponent_vanishing_selection=1):
         self.game = game
         self.primal_stepsize = primal_stepsize
         self.dual_stepsize = dual_stepsize
@@ -142,3 +155,33 @@ class FBF_HSDM_distr_algorithm:
         dual_transformed = torch.maximum(self.dual + torch.sum(torch.bmm(A_i, self.x) - b_i, 0), torch.zeros(self.dual.size()))
         residual = np.sqrt( ((x - x_transformed).norm())**2 + ((self.dual-dual_transformed).norm())**2 )
         return residual
+
+    def set_stepsize_using_Lip_const(self, safety_margin=.5):
+        #compute stepsizes as (1/L)*safety_margin, where L is the lipschitz constant of the forward operator
+        N = self.x.size(0)
+        n_x = self.x.size(1)
+        n_constr = self.game.A_ineq_shared.size(1)
+        # In the linear-quadratic game case, the forward operator is:
+        # [ 0, A', 0;
+        #   A, L, -L;
+        #   0, L,  0 ] + F(x)
+        # Where A=diag(A_i) and L is (kron(Laplacian, n_constr)).
+        A = torch.zeros(N*n_x, N*n_constr)
+        for i in range(N):
+            A[i*n_x:(i+1)*n_x, i*n_constr:(i+1)*n_constr] = self.game.A_ineq_shared[i,:,:]
+
+        L = torch.zeros(N * n_constr, N * n_constr)
+        for i in range(N):
+            for j in range(N):
+                L[i * n_constr:(i + 1) * n_constr, j * n_constr:(j + 1) * n_constr] = self.game.K.L[i, j, :, :]
+
+        H = torch.cat((torch.cat((torch.zeros(N*n_x,N*n_x), torch.transpose(A,0,1), torch.zeros(N*n_x, N*n_constr)), dim=1), \
+                       torch.cat((A, L, -L),dim=1), \
+                       torch.cat((torch.zeros(N*n_constr, N*n_x), L, torch.zeros(N*n_constr, N*n_constr)), dim=1)), dim=0)
+        U, S, V = torch.linalg.svd(H)
+        Lip_H = torch.max(S).item()
+        mu, Lip_pseudog = self.game.F.get_strMon_Lip_constants()
+        Lip_tot = Lip_H + Lip_pseudog
+        self.primal_stepsize = safety_margin/Lip_tot
+        self.dual_stepsize = safety_margin/Lip_tot
+        self.consensus_stepsize = safety_margin/Lip_tot

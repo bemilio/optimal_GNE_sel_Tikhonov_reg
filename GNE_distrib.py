@@ -67,3 +67,32 @@ class FBF_distr_algorithm:
         dual_transformed = torch.maximum(self.dual + torch.sum(torch.bmm(A_i, self.x) - b_i, 0), torch.zeros(self.dual.size()))
         residual = np.sqrt( ((x - x_transformed).norm())**2 + ((self.dual-dual_transformed).norm())**2 )
         return residual
+
+    def set_stepsize_using_Lip_const(self, safety_margin=0.5):
+        #compute stepsizes as (1/L)*safety_margin, where L is the lipschitz constant of the forward operator
+        N = self.x.size(0)
+        n_x = self.x.size(1)
+        n_constr = self.game.A_ineq_shared.size(1)
+        # In the linear-quadratic game case, the forward operator is:
+        # [ 0, A', 0;
+        #   A, L, -L;
+        #   0, L,  0 ] + F(x)
+        # Where A=diag(A_i) and L is (kron(Laplacian, n_constr)).
+        A = torch.zeros(N*n_x, N*n_constr)
+        for i in range(N):
+            A[i*n_x:(i+1)*n_x, i*n_constr:(i+1)*n_constr] = self.game.A_ineq_shared[i,:,:]
+
+        L = torch.zeros(N * n_constr, N * n_constr)
+        for i in range(N):
+            for j in range(N):
+                L[i * n_constr:(i + 1) * n_constr, j * n_constr:(j + 1) * n_constr] = self.game.K.L[i, j, :, :]
+        H = torch.cat((torch.cat((torch.zeros(N*n_x,N*n_x), torch.transpose(A,0,1), torch.zeros(N*n_x, N*n_constr)), dim=1), \
+                       torch.cat((A, L, -L),dim=1), \
+                       torch.cat((torch.zeros(N*n_constr, N*n_x), L, torch.zeros(N*n_constr, N*n_constr)), dim=1)), dim=0)
+        U, S, V = torch.linalg.svd(H)
+        Lip_H = torch.max(S).item()
+        mu, Lip_pseudog = self.game.F.get_strMon_Lip_constants()
+        Lip_tot = Lip_H + Lip_pseudog
+        self.primal_stepsize = safety_margin/Lip_tot
+        self.dual_stepsize = safety_margin/Lip_tot
+        self.consensus_stepsize = safety_margin/Lip_tot
