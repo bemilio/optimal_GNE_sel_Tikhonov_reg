@@ -30,7 +30,7 @@ class pFB_tich_prox_distr_algorithm:
         q = torch.zeros(N_agents, n, 1)
         self.projection = BackwardStep(Q, q, game.A_ineq_loc, game.b_ineq_loc, game.A_eq_loc, game.b_eq_loc,1)
         self.eps_tich = lambda t: t**(-1*exponent_vanishing_precision)
-        self.weight_sel = lambda t: t**(-1*exponent_vanishing_selection)
+        self.weight_sel = lambda t: .1*(t**(-1*exponent_vanishing_selection))
         self.alpha_tich_regul = alpha_tich_regul
         self.outer_iter = 1
 
@@ -81,7 +81,7 @@ class pFB_tich_prox_distr_algorithm:
         max_neigh = max([torch.abs(self.game.K.L[i, i, 0, 0]).item() for i in range(N)]) # The diagonal of the Laplacian matrix contains the node degree
         max_A = torch.max(torch.sum(torch.abs(self.game.A_ineq_shared),dim=2)).item()
         delta = (1/(safety_margin*min( str_mon, (2/max_neigh)) ) )
-        self.primal_stepsize = 1/(max_A * delta)
+        self.primal_stepsize = 1/(max_A + delta)
         self.dual_stepsize = 1 / (max_A + 2*max_neigh + delta)
         self.consensus_stepsize = 1 / ( 2 * max_neigh + delta)
 
@@ -110,7 +110,7 @@ class FBF_HSDM_distr_algorithm:
         Q = torch.zeros(N_agents, n, n) # Local cost is zero
         q = torch.zeros(N_agents, n, 1)
         self.projection = BackwardStep(Q, q, game.A_ineq_loc, game.b_ineq_loc, game.A_eq_loc, game.b_eq_loc,1)
-        self.weight_sel = lambda t: t**(-1*exponent_vanishing_selection)
+        self.weight_sel = lambda t: .1*(t**(-1*exponent_vanishing_selection))
         self.iteration = 1
 
     def run_once(self):

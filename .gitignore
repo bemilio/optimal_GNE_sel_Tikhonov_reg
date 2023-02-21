@@ -113,3 +113,12 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .DS_Store
+*.iml
+*.xml
+*.png
+*.pdf
+*.txt
+log.txt
+*.pkl
+saved_test_result.pkl
+plot.py

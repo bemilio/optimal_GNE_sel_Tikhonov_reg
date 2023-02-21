@@ -72,7 +72,7 @@ class Game:
             # Return strong monotonicity and Lipschitz constant
             # Convert Q from block matrix to standard matrix #TODO: turn block matrix into separate class
             N = self.Q.size(0)
-            n_x = N = self.Q.size(2)
+            n_x = self.Q.size(2)
             Q_mat = torch.zeros(N*n_x, N*n_x)
             for i in range(N):
                 for j in range(N):
@@ -142,7 +142,7 @@ class Game:
             # Return strong monotonicity and Lipschitz constant
             # Convert Q from block matrix to standard matrix #TODO: turn block matrix into separate class
             N = self.Q.size(0)
-            n_x = N = self.Q.size(2)
+            n_x = self.Q.size(2)
             Q_mat = torch.zeros(N*n_x, N*n_x)
             for i in range(N):
                 for j in range(N):

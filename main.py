@@ -8,6 +8,7 @@ from RadioCommSetup import RadioCommSetup
 from GameDefinition import Game
 import time
 import logging
+import sys
 
 if __name__ == '__main__':
     logging.basicConfig(filename='log.txt', filemode='w',level=logging.DEBUG)
@@ -15,13 +16,21 @@ if __name__ == '__main__':
     if use_test_game:
         print("WARNING: test game will be used.")
         logging.info("WARNING: test game will be used.")
-    np.random.seed(2)
+    if len(sys.argv) < 2:
+        seed = 9
+        job_id=0
+    else:
+        seed=int(sys.argv[1])
+        job_id = int(sys.argv[2])
+    print("Random seed set to  " + str(seed))
+    logging.info("Random seed set to  " + str(seed))
+    np.random.seed(seed)
     N_iter=100000
     N_it_per_residual_computation = 10
-    N_agents = 25
-    n_channels = 10
+    N_agents = 15
+    n_channels = 64
     n_neighbors = 6 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
-    P_max_shared = 3 # Max power that can go on a channel
+    P_max_shared = 2 # Max power that can go on a channel
     P_max_local = torch.ones(N_agents,1) # Max power that each agent can output (cumulative on all channels).
                                          # By the reformulation of Scutari, this is used in en EQUALITY constraint
                                          # (so the power output is = P_max)
@@ -35,9 +44,11 @@ if __name__ == '__main__':
     ##########################################
     #  Define alg. parameters to test        #
     ##########################################
+
+
     exponent_sel_fun_to_test = [.6, .8, 1.] # The selection function weight decades as 1/k^exp
-    tichonov_inertia_to_test = [.1, 1, 10] # weight that multiplies \|x-x_k\| in the tich. reg. problem
-    tichonov_epsilon_wrt_sel_fun_to_test = [2, 5, 10] # The approx. error in the tich.reg. problem evolves as 1/k^(p*exp), where p is this parameter and exp is the first parameter
+    tichonov_inertia_to_test = [1] # weight that multiplies \|x-x_k\| in the tich. reg. problem
+    tichonov_epsilon_wrt_sel_fun_to_test = [2, 10] # The approx. error in the tich.reg. problem evolves as 1/k^(p*exp), where p is this parameter and exp is the first parameter
     parameters_to_test=[]
     for par_1 in exponent_sel_fun_to_test:
         for par_2 in tichonov_inertia_to_test:
@@ -63,7 +74,7 @@ if __name__ == '__main__':
         ##########################################
         #             Game inizialization        #
         ##########################################
-        game = Game(N_agents, n_channels, comm_graph, 0*game_params.Q , 0*game_params.c,
+        game = Game(N_agents, n_channels, comm_graph, game_params.Q , game_params.c,
                     game_params.A_eq_loc_const, game_params.A_ineq_loc_const, game_params.A_ineq_shared,
                     game_params.b_eq_loc_const, game_params.b_ineq_loc_const, game_params.b_ineq_shared,
                     Q_sel=game_params.Q_sel_fun, c_sel=game_params.c_sel_fun, test=use_test_game)
@@ -185,7 +196,7 @@ if __name__ == '__main__':
 
     print("Saving results...")
     logging.info("Saving results...")
-    f = open('saved_test_result.pkl', 'wb')
+    f = open('saved_test_result_'+ str(job_id) + ".pkl", 'wb')
     pickle.dump([ x_store_tich, x_store_hsdm, x_store_std,
                  dual_store_tich, dual_store_hsdm, dual_store_std,
                  aux_store_tich, aux_store_hsdm, aux_store_std,
