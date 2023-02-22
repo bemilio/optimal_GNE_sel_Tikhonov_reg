@@ -1,13 +1,6 @@
 import matplotlib as mpl
 import seaborn as sns
 import pandas as pd
-import statistics as stat
-from cmath import inf
-from Utilities.generate_permutations import generate_permutations
-from Utilities.multinomial_factor import multinomial_factor
-from operator import itemgetter
-
-
 mpl.interactive(True)
 import matplotlib.pyplot as plt
 
@@ -20,399 +13,257 @@ import networkx as nx
 import numpy as np
 import pickle
 import torch
-from Utilities.plot_agent_route import plot_agent_route
+import os
 
-def compute_quartiles(vec):
-    return np.percentile(vec, 25) , np.percentile(vec, 75)
+TICH = 0
+HSDM = 1
+FBF=2
 
-def compute_95_confidence(vec):
-    return np.percentile(vec, 5) , np.percentile(vec, 95)
-
-f = open('saved_test_result.pkl', 'rb')
-
-## Data structure:
-## x: Tensor with dimension (n. random tests, N agents, n variables)
-## dual: Tensor with dimension (n. random tests, n constraints, )
-## Residual: Tensor with dimension (n. random tests, K iterations)
-x, dual, residual, cost, road_graph, edge_time_to_index, node_time_to_index, T_horiz, initial_junctions, final_destinations, \
-congestion_baseline_stored, cost_baseline_stored = pickle.load(f)
-f.close()
-# f = open("saved_dataframes.pkl", 'rb')
-# cost_dataframe_comparison, costs_dataframe, congestion_dataframe = pickle.load(f)
-# f.close()
-
-N_tests = x.size(0)
-N_agents = x.size(1)
-N_opt_var = x.size(2)
-N_iter = residual.size(1)
-N_edges = road_graph.number_of_edges()
-N_vertices = road_graph.number_of_nodes()
-
-torch.Tensor.ndim = property(lambda self: len(self.shape))  # Necessary to use matplotlib with tensors
-
-plot_exact_congestion = False # compare approximation to exact congestion value (instead of sampling). Beware: extremely computational expensive
-
-#Plot # 0: road graph
-fig, ax = plt.subplots(T_horiz, 2, figsize=(5, 10 * 1.4), layout='constrained')
-# fig, ax = plt.subplots(1, 1, figsize=(5, 2.6), layout='constrained')
-pos = nx.get_node_attributes(road_graph, 'pos')
-# # Toggle for multiple graphs
-for t in range(T_horiz):
-# for t in range(1):
-    colors = []
-    edgelist = []
-    nodes = []
-    for edge in road_graph.edges:
-        if not edge[0] == edge[1]:
-            color_edge = np.matrix([0])
-            congestion = torch.sum(x[0, :, edge_time_to_index[(edge, t)]], 0) / N_agents
-            color_edge = congestion
-            colors.append(int(256 * color_edge))
-            edgelist.append(edge)
-    for node in road_graph.nodes:
-        nodes.append(node)
-    pos = nx.kamada_kawai_layout(road_graph)
-    plt.sca(ax[t, 0])
-    nx.draw_networkx_nodes(road_graph, pos=pos, nodelist=nodes, node_size=120, node_color='cyan')
-    nx.draw_networkx_labels(road_graph, pos)
-    # Toggle to color edges based on congestion
-    nx.draw_networkx_edges(road_graph, pos=pos, edge_color=colors, edgelist=edgelist, edge_cmap=plt.cm.cool,
-                           connectionstyle='arc3, rad = 0.1')
-    nx.draw_networkx_edges(road_graph, pos=pos, edgelist=edgelist,
-                           connectionstyle='arc3, rad = 0.2')
-# Draw baseline
-# for t in range(T_horiz):
-#     colors = []
-#     edgelist = []
-#     nodes = []
-#     for edge in road_graph.edges:
-#         if not edge[0] == edge[1]:
-#             color_edge = np.matrix([0])
-#             if (edge, t) in congestion_baseline_stored[0].keys():
-#                 congestion = congestion_baseline_stored[0][(edge, t)]
-#             else:
-#                 congestion = 0
-#             color_edge = congestion
-#             colors.append(int(256 * color_edge))
-#             edgelist.append(edge)
-#     for node in road_graph.nodes:
-#         nodes.append(node)
-#     pos = nx.kamada_kawai_layout(road_graph)
-#     plt.sca(ax[t, 1])
-#     nx.draw_networkx_nodes(road_graph, pos=pos, nodelist=nodes, node_size=150, node_color='blue')
-#     nx.draw_networkx_labels(road_graph, pos)
-#     nx.draw_networkx_edges(road_graph, pos=pos, edge_color=colors, edgelist=edgelist, edge_cmap=plt.cm.cool,
-#                            connectionstyle='arc3, rad = 0.1')
-#
-# plt.show(block=False)
-#
-plt.savefig('0_graph.png')
-
-
-
-## Plot # 1: Residuals
-print("Plotting residual...")
-fig, ax = plt.subplots(figsize=(5, 1.8), layout='constrained')
-ax.plot(np.arange(0, N_iter * 10, 10), torch.max(residual[:, :], dim=0).values, "tab:cyan", linewidth=.5 )
-ax.plot(np.arange(0, N_iter * 10, 10), torch.min(residual[:, :], dim=0).values, "tab:cyan", linewidth=.5 )
-plt.fill_between(np.arange(0, N_iter * 10, 10), torch.min(residual[:, :], dim=0).values, torch.max(residual[:, :], dim=0).values, color="tab:cyan", alpha=0.3, label="Min-max residual")
-ax.plot(np.arange(0, N_iter * 10, 10), torch.sum(residual[:, :], 0)/N_tests, "tab:orange", label="Average residual" )
-
-plt.xscale('log')
-plt.yscale('log')
-
-plt.xlabel('Iteration')
-plt.ylabel('Residual')
-plt.legend()
-plt.grid(True)
-plt.savefig('Figures/1_residual.png')
-plt.savefig('Figures/1_residual.pdf')
-plt.show()
-
-
-
-### Plot #2 : congestion in tests vs. shortest path
-
-# Preliminaries: generate realization of probabilistic controller
-N_vehicles_per_agent = 10**3
-
-visited_nodes = torch.zeros((N_tests, N_agents, N_vehicles_per_agent, T_horiz+1))
-count_edge_taken_at_time = {} # count how many vehicles pass by the edge at time t
-for test in range(N_tests):
-    for edge in road_graph.edges:
-        for t in range(T_horiz):
-            count_edge_taken_at_time.update({(test, edge, t): 0})
-
-for test in range(N_tests):
-    for i_agent in range(N_agents):
-        visited_nodes[test, i_agent, :, 0] = initial_junctions[test][i_agent] * torch.ones((N_vehicles_per_agent, 1)).flatten()
-    for t in range(T_horiz):
-        for i_agent in range(N_agents):
-            for vehicle in range(N_vehicles_per_agent):
-                starting_node = visited_nodes[test, i_agent, vehicle, t].int().item()
-                if t==0:
-                    prob_starting_node=1 #probability of initial condition
-                else:
-                    prob_starting_node = max(x[test, i_agent, node_time_to_index[(starting_node, t)]], 0)
-                if prob_starting_node < 0.00001:
-                    print("Warning: a vehicle ended up in a very unlikely node")
-                conditioned_prob = np.zeros(road_graph.number_of_nodes())
-                for end_node in range(road_graph.number_of_nodes()):
-                    if (starting_node, end_node) in road_graph.edges:
-                        conditioned_prob[end_node] =  max(x[test, i_agent, edge_time_to_index[(( starting_node, end_node), t)] ], 0) / prob_starting_node
-                    else:
-                        conditioned_prob[end_node] = 0
-                if sum(conditioned_prob) -1 >=0.0001:
-                    print("Warning: conditioned prob. does not sum to 1, but to " + sum(conditioned_prob))
-                conditioned_prob = conditioned_prob/sum(conditioned_prob) #necessary just for numerical tolerancies
-                next_visited_node = np.random.choice(range(road_graph.number_of_nodes()), p=conditioned_prob)
-                visited_nodes[test, i_agent, vehicle, t + 1] = next_visited_node
-                count_edge_taken_at_time.update( {( test, (starting_node, next_visited_node), t): count_edge_taken_at_time[(test, (starting_node, next_visited_node), t)] +1 } )
-
-## x: Tensor with dimension (n. random tests, N agents, n variables)
-
-print("Plotting congestion comparison...")
-# bar plot of maximum edge congestion compared to constraint
-fig, ax = plt.subplots(figsize=(5 * 1, 3.6 * 1), layout='constrained')
-congestions = torch.zeros(N_tests, N_edges)
-congestion_baseline = torch.zeros(N_tests, N_edges)
-
-for i_test in range(N_tests):
-    i_edges = 0
-    for edge in road_graph.edges:
-        if not edge[0] == edge[1]:
-            congestions[i_test, i_edges] = 0
-            for t in range(T_horiz):
-                # Toggle these two to change from expected value to realized value
-                relative_congestion = (torch.sum(x[i_test, :, edge_time_to_index[(edge, t)]], 0) / N_agents) \
-                                      / road_graph[edge[0]][edge[1]]['limit_roads']
-                # relative_congestion = ( (count_edge_taken_at_time[(test, edge, t)]/N_vehicles_per_agent) / N_agents) \
-                #                           / road_graph[edge[0]][edge[1]]['limit_roads']
-                if relative_congestion>1.002:
-                    print("Constraint not satisfied at test " + str(i_test)  )
-                congestions[i_test, i_edges] = max(relative_congestion, congestions[i_test, i_edges])
-                if (edge, t) in congestion_baseline_stored[i_test].keys():
-                    relative_congestion_baseline = congestion_baseline_stored[i_test][(edge, t)] / \
-                                                   road_graph[edge[0]][edge[1]]['limit_roads']
-                    congestion_baseline[i_test, i_edges] = max(relative_congestion_baseline,
-                                                               congestion_baseline[i_test, i_edges])
-            i_edges = i_edges + 1
-congestions = congestions[:, 0:i_edges]  # ignore self-loops
-congestion_baseline = congestion_baseline[:, 0:i_edges]
-congestion_dataframe = pd.DataFrame(columns=['test', 'edge', 'method', 'value'])
-for i_test in range(N_tests):
-    for edge in range(i_edges):
-        s_row = pd.DataFrame([[i_test, edge, 'Proposed', congestions[i_test, edge].item()]],
-                             columns=['test', 'edge', 'method', 'value'])
-        congestion_dataframe = congestion_dataframe.append(s_row)
-        s_row = pd.DataFrame([[i_test, edge, 'SP', congestion_baseline[i_test, edge].item()]],
-                             columns=['test', 'edge', 'method', 'value'])
-        congestion_dataframe = congestion_dataframe.append(s_row)
-
-if N_tests >= 2:
-    ax.axhline(y=1, linewidth=2, color='black', label="Road limit")
-    ax.axhline(y=  0.1/0.2, linewidth=1, color='black', linestyle='--', label="Free-flow limit")
-    palette_pastel_custom = [sns.color_palette("pastel")[0], sns.color_palette("pastel")[3] ]
-    palette_bright_custom = [sns.color_palette("bright")[0], sns.color_palette("bright")[3]]
-    palette_bright_blue = [sns.color_palette("bright")[0]]
-    palette_bright_red = [sns.color_palette("bright")[3]]
-    # ax = sns.boxplot(x="edge", y="value", hue="method", medianprops={'color': 'lime', 'lw': 0}, data=congestion_dataframe, palette=palette_pastel_custom, showfliers = False, saturation=0.50) #, medianprops={'color': 'lime', 'lw': 2}
-    congestion_dataframe_mine = congestion_dataframe[congestion_dataframe['method'] == 'Proposed']
-    congestion_dataframe_baseline = congestion_dataframe[congestion_dataframe['method'] == 'SP']
-    ax=sns.lineplot(x="edge", y="value", estimator=np.median, data=congestion_dataframe, hue="method", palette=palette_bright_custom, errorbar=compute_95_confidence, legend="brief")
-    ax = sns.pointplot(x="edge", y="value", estimator=np.median, data=congestion_dataframe_mine, palette=palette_bright_blue, errorbar=compute_95_confidence, errwidth=1, capsize=.5)
-    ax = sns.pointplot(x="edge", y="value", estimator=np.median, data=congestion_dataframe_baseline, palette=palette_bright_red, errorbar=compute_95_confidence, errwidth=1, capsize=.5)
-    ax.grid(True)
+method_name= { TICH: "Tich", HSDM:"HSDM", FBF:"FBF"}
+load_files_from_current_dir = False
+create_new_dataframe_file = False
+if load_files_from_current_dir:
+    directory = "."
 else:
-    ax.axhline(y=1, linewidth=1, color='red', label="Road limit")
-    ax.axhline(y= 0.05/0.15, linewidth=1, color='orange', linestyle='--', label="Free-flow limit")
-    ax.bar([k - 0.2 for k in range(congestions.size(1))], congestions.flatten(), width=0.4, align='center',
-           label="Proposed")
-    ax.bar([k + 0.2 for k in range(congestion_baseline.size(1))], congestion_baseline.flatten(), width=0.4,
-           align='center',
-           label="Naive")
+    directory = r"/Users/ebenenati/surfdrive/TUDelft/Simulations/Cross_interference/Tichonov_vs_HSDm/23_02_23"
+if not os.path.exists(directory + "/Figures"):
+    os.makedirs(directory + r"/Figures")
 
-plt.legend(prop={'size': 8})
-ax.set_xlabel(r'edge')
-ax.set_ylabel(r'congestion')
-ax.set_ylim([-0.1, 1.5])
-plt.savefig('Figures/2_comparison_congestions.png')
-plt.savefig('Figures/2_comparison_congestions.pdf')
+if create_new_dataframe_file or not os.path.exists('saved_dataframe.pkl'):
+    if  create_new_dataframe_file:
+        print("DataFrame file will be recreated as requested.  This will take a while.")
+    else:
+        print("File containing the DataFrame not found, it will be created. This will take a while.")
+    #### Toggle between loading saved file in this directory or all files in a specific directory
+    if load_files_from_current_dir:
+        f = open('saved_test_result.pkl', 'rb')
+        x_store_tich, x_store_hsdm, x_store_std, \
+            dual_store_tich, dual_store_hsdm, dual_store_std,  \
+            aux_store_tich, aux_store_hsdm, aux_store_std, \
+            residual_store_tich, residual_store_hsdm, residual_store_std, \
+            sel_func_store_tich, sel_func_store_hsdm, sel_func_store_std, \
+            parameters_tested= pickle.load(f)
+        f.close()
+    else:
+        #########
+        # Load all files in a directory and stack them in single tensors
+        #########
+        N_files = 0
+        for filename in os.listdir(directory):
+            if filename.find('.pkl')>=0:
+                N_files=N_files+1 #count all files
 
-plt.show(block=False)
+        dummy = False
+        for filename in os.listdir(directory):
+            if filename.find('.pkl')>=0:
+                f=open(directory+"/"+filename, 'rb')
+                x_store_tich_single_file, x_store_hsdm_single_file, x_store_std_single_file, \
+                    dual_store_tich_single_file, dual_store_hsdm_single_file, dual_store_std_single_file, \
+                    aux_store_tich_single_file, aux_store_hsdm_single_file, aux_store_std_single_file, \
+                    residual_store_tich_single_file, residual_store_hsdm_single_file, residual_store_std_single_file, \
+                    sel_func_store_tich_single_file, sel_func_store_hsdm_single_file, sel_func_store_std_single_file, \
+                    parameters_tested = pickle.load(f)
+                if not dummy:
+                    x_store_tich= x_store_tich_single_file
+                    x_store_hsdm = x_store_hsdm_single_file
+                    x_store_std = x_store_std_single_file
+                    residual_store_tich = residual_store_tich_single_file
+                    residual_store_hsdm= residual_store_hsdm_single_file
+                    residual_store_std = residual_store_std_single_file
+                    sel_func_store_tich = sel_func_store_tich_single_file
+                    sel_func_store_hsdm = sel_func_store_hsdm_single_file
+                    sel_func_store_std = sel_func_store_std_single_file
+                else:
+                    x_store_tich = torch.cat((x_store_tich, x_store_tich_single_file),dim=0)
+                    x_store_hsdm = torch.cat((x_store_hsdm, x_store_hsdm_single_file),dim=0)
+                    x_store_std = torch.cat((x_store_std, x_store_std_single_file),dim=0)
+                    residual_store_tich = torch.cat((residual_store_tich, residual_store_tich_single_file),dim=0)
+                    residual_store_hsdm = torch.cat((residual_store_hsdm, residual_store_hsdm_single_file),dim=0)
+                    residual_store_std = torch.cat((residual_store_std, residual_store_std_single_file),dim=0)
+                    sel_func_store_tich = torch.cat((sel_func_store_tich, sel_func_store_tich_single_file),dim=0)
+                    sel_func_store_hsdm = torch.cat((sel_func_store_hsdm, sel_func_store_hsdm_single_file),dim=0)
+                    sel_func_store_std = torch.cat((sel_func_store_std, sel_func_store_std_single_file),dim=0)
+                dummy = True
+    print("Files loaded...")
+    N_tests = x_store_tich.size(0)
+    N_tested_sets_of_params = x_store_tich.size(1)
+    N_parameters = 3 # parameters_to_test is a list of tuples, each tuple contains N_parameters
+    N_agents = x_store_tich.size(2)
+    N_opt_var = x_store_tich.size(3)
+    N_iterations = residual_store_tich.size(2)
+    N_methods = 3 # tichonov, hsdm, standard
 
-### Plot #3 : traversing time in tests vs. shortest path
+    torch.Tensor.ndim = property(lambda self: len(self.shape))  # Necessary to use matplotlib with tensors
 
-## Computed cost function with exact expected congestion
+    parameters_set_to_plot_hsdm = []
+    for i in range(len(parameters_tested)): # Maps the set of parameters used for tichonov to the set of parameters used for HSDM
+        is_already_in_list = False
+        for p_hsdm in parameters_set_to_plot_hsdm:
+            if parameters_tested[i][0] == parameters_tested[p_hsdm][0]:
+                is_already_in_list = True
+        if not is_already_in_list:
+            parameters_set_to_plot_hsdm.append(i)
+    N_tested_sets_of_params_hsdm = len (parameters_set_to_plot_hsdm)
 
-if plot_exact_congestion:
-    # Generate vectors of length N that sum to 4
-    print("Computing exact cost... this will take a while")
-    k_all = generate_permutations(4, N_agents)
-    expected_sigma_4th = torch.zeros(N_tests, N_opt_var) # For consistency, include also the variables associated to nodes (with no congestion)
-    cost_exact = torch.zeros(N_tests,N_agents)
-    for i_test in range(N_tests):
-        for edge in road_graph.edges:
-            for t in range(T_horiz):
-                for i_perm in range(k_all.size(0)):
-                    k = k_all[i_perm, :]
-                    prod_p = 1
-                    factor = multinomial_factor(4,k)
-                    for index_agent in range(N_agents):
-                        if k[index_agent]>0.001 : # if the corresponding factor is non-zero
-                            if x[i_test, index_agent, edge_time_to_index[(edge, t)]].item() < 0.00001: # save on some computation if the current factor is 0
-                                prod_p = 0
-                                break
-                            else:
-                                prod_p = prod_p * x[i_test, index_agent, edge_time_to_index[(edge, t)]].item()
-                    expected_sigma_4th[i_test, edge_time_to_index[(edge, t)]] = \
-                        expected_sigma_4th[i_test, edge_time_to_index[(edge, t)]] + factor * prod_p
+    N_datapoints = N_tests * (N_tested_sets_of_params + N_tested_sets_of_params_hsdm + 1)  * N_iterations
+    list_parameter_set = np.zeros((N_datapoints,1))
+    list_residual = np.zeros((N_datapoints,1))
+    list_iteration = np.zeros((N_datapoints,1))
+    list_method = np.zeros((N_datapoints,1))
+    list_sel_fun = np.zeros((N_datapoints,1))
 
-    for i_agent in range(N_agents):
-        for i_test in range(N_tests):
-            for edge in road_graph.edges:
-                for t in range(T_horiz):
-                    congestion = road_graph[edge[0]][edge[1]]['travel_time'] * ( 1 +  0.15 * expected_sigma_4th[i_test, edge_time_to_index[(edge, t)]] / \
-                                                                                 ((N_agents * road_graph[edge[0]][edge[1]]['capacity'])**4))
-                    cost_partial = x[i_test, i_agent, edge_time_to_index[(edge, t)]] * congestion
-                    cost_exact[i_test, i_agent] = cost_exact[i_test, i_agent] + cost_partial
-    print("Computed, plotting...")
-
-fig, ax = plt.subplots(figsize=(5 * 1, 1.8 * 1), layout='constrained')
-
-social_cost = torch.zeros(N_tests)
-social_cost_baseline = torch.zeros(N_tests)
-for i_test in range(N_tests):
-    for edge in road_graph.edges:
-        for t in range(T_horiz):
-            uncontrolled_traffic_edge = road_graph[edge[0]][edge[1]]['uncontrolled_traffic']
-            sigma = (count_edge_taken_at_time[(i_test, edge, t)]/N_vehicles_per_agent)/N_agents
-            cost_edge = road_graph[edge[0]][edge[1]]['travel_time'] * ( 1 + 0.15 * ( (sigma + (uncontrolled_traffic_edge / N_agents) )/ \
-                                                            (road_graph[edge[0]][edge[1]]['capacity']) )**4)
-            if (edge, t) in congestion_baseline_stored[i_test].keys():
-                sigma_baseline = congestion_baseline_stored[i_test][(edge, t)]
-            else:
-                sigma_baseline=0
-            cost_edge_baseline = road_graph[edge[0]][edge[1]]['travel_time'] * (
-                        1 + 0.15 * ((sigma_baseline+(uncontrolled_traffic_edge / N_agents) ) / \
-                        (road_graph[edge[0]][edge[1]]['capacity']) )** 4)
-            cost_partial = sigma * cost_edge
-            cost_partial_baseline = sigma_baseline * cost_edge_baseline
-
-            social_cost[i_test] = social_cost[i_test] + cost_partial
-            social_cost_baseline[i_test] = social_cost_baseline[i_test] + cost_partial_baseline
-
-# costs_baseline = torch.zeros(N_tests, N_agents)
-# for i_test in range(N_tests):
-#     costs_baseline[i_test, :] = cost_baseline_stored[i_test]
-# social_cost_baseline = torch.sum(costs_baseline, 1)/ N_agents
-costs_dataframe = pd.DataFrame(columns=['test', 'value'])
-for i_test in range(N_tests):
-    s_row = pd.DataFrame([[i_test,
-                           (social_cost_baseline[i_test].item() - social_cost[i_test].item()) / social_cost_baseline[
-                               i_test].item()]], columns=['test', 'value'])
-    costs_dataframe = costs_dataframe.append(s_row)
-
-ax = sns.boxplot(x="value", data=costs_dataframe, palette="Set3")
-ax.set_ylim([-1, 1])
-ax.grid(True)
-
-ax.set_xlabel(r'$\frac{\sum_i J_i(x_b) - J_i(x^{\star})}{\sum_i J_i(x_b)}$ ')
-
-plt.savefig('Figures/3_comparison_social_welfare.png')
-plt.savefig('Figures/3_comparison_social_welfare.pdf')
-
-plt.show(block=False)
-
-### Plot #4 : expected value congestion error vs. # of agents
-fig, ax = plt.subplots(figsize=(4, 1.3), layout='constrained')
-# Preliminaries: generate realization of probabilistic controller FOR ALL NUMBER OF VEHICLES PER AGENT
-N_vehicles_per_agent = [ 10**1, 10**2, 10**3]
-N_tests_sample_size = np.size(N_vehicles_per_agent)
-
-cost_edges_expected = torch.zeros(N_tests_sample_size, N_tests, N_edges, T_horiz)
-cost_edges_real = torch.zeros(N_tests_sample_size, N_tests, N_edges, T_horiz)
-
-count_edge_taken_at_time = {} # count how many vehicles pass by the edge at time t
-for index_n in range(N_tests_sample_size):
+    index_datapoint=0
     for test in range(N_tests):
-        for edge in road_graph.edges:
-            for t in range(T_horiz):
-                count_edge_taken_at_time.update({(index_n, test, edge, t): 0})
+        for par_index in range(N_tested_sets_of_params):
+            for iteration in range(N_iterations):
+                # Tichonov
+                list_residual[index_datapoint]=residual_store_tich[test,par_index,iteration].item()
+                list_parameter_set[index_datapoint] = par_index
+                list_iteration[index_datapoint] = iteration * 10 # residual is sampled every 10 iterations
+                list_method[index_datapoint] = TICH
+                list_sel_fun[index_datapoint] = sel_func_store_tich[test,par_index,iteration].item()
+                index_datapoint = index_datapoint +1
+                # HSDM
+                if par_index in parameters_set_to_plot_hsdm:
+                    list_residual[index_datapoint] = residual_store_hsdm[test, par_index, iteration]
+                    list_parameter_set[index_datapoint] = par_index
+                    list_iteration[index_datapoint] = iteration * 10 # residual is sampled every 10 iterations
+                    list_method[index_datapoint] = HSDM
+                    list_sel_fun[index_datapoint] = sel_func_store_hsdm[test, par_index, iteration].item()
+                    index_datapoint = index_datapoint + 1
+                # FBF
+                if par_index == 0:
+                    list_residual[index_datapoint] = residual_store_std[test, par_index, iteration]
+                    list_parameter_set[index_datapoint] = 0
+                    list_iteration[index_datapoint] = iteration * 10 # residual is sampled every 10 iterations
+                    list_method[index_datapoint] = FBF
+                    list_sel_fun[index_datapoint] = sel_func_store_std[test, par_index, iteration].item()
+                    index_datapoint = index_datapoint +1
+    df = pd.DataFrame({'Parameters set': list_parameter_set[:,0],\
+                                    'Residual': list_residual[:,0], 'Iteration': list_iteration[:,0],'Method': list_method[:,0], 'Sel. Fun.': list_sel_fun[:,0]})
+    # df['Parameters set'] = df['Parameters set'].map(parameters_labels)
 
-for index_n in range(N_tests_sample_size):
-    n = N_vehicles_per_agent[index_n]
-    visited_nodes = torch.zeros((N_tests, N_agents, n, T_horiz + 1))
-    for i_test in range(N_tests):
-        for i_agent in range(N_agents):
-            visited_nodes[i_test, i_agent, :, 0] = initial_junctions[i_test][i_agent] * torch.ones((n, 1)).flatten()
-        for t in range(T_horiz):
-            for i_agent in range(N_agents):
-                for vehicle in range(n):
-                    starting_node = visited_nodes[i_test, i_agent, vehicle, t].int().item()
-                    if t==0:
-                        prob_starting_node=1 #probability of initial condition
-                    else:
-                        prob_starting_node = max(x[i_test, i_agent, node_time_to_index[(starting_node, t)]], 0)
-                    if prob_starting_node < 0.00001:
-                        print("Warning: a vehicle ended up in a very unlikely node")
-                    conditioned_prob = np.zeros(road_graph.number_of_nodes())
-                    for end_node in range(road_graph.number_of_nodes()):
-                        if (starting_node, end_node) in road_graph.edges:
-                            conditioned_prob[end_node] =  max(x[i_test, i_agent, edge_time_to_index[(( starting_node, end_node), t)] ], 0) / prob_starting_node
-                        else:
-                            conditioned_prob[end_node] = 0
-                    if sum(conditioned_prob) -1 >=0.0001:
-                        print("Warning: conditioned prob. does not sum to 1, but to " + str(sum(conditioned_prob)))
-                    conditioned_prob = conditioned_prob/sum(conditioned_prob) #necessary just for numerical tolerancies
-                    next_visited_node = np.random.choice(range(road_graph.number_of_nodes()), p=conditioned_prob)
-                    visited_nodes[i_test, i_agent, vehicle, t + 1] = next_visited_node
-                    count_edge_taken_at_time.update( {(index_n, i_test, (starting_node, next_visited_node), t): count_edge_taken_at_time[(index_n, i_test, (starting_node, next_visited_node), t)] +1 } )
+    # Save dataframe
+    f = open('saved_dataframe.pkl', 'wb')
+    pickle.dump([df, parameters_tested, N_iterations, parameters_set_to_plot_hsdm], f)
+    f.close()
+    print("DataFrame file created.")
+else:
+    f = open('saved_dataframe.pkl', 'rb')
+    df, parameters_tested, N_iterations, parameters_set_to_plot_hsdm = pickle.load(f)
+    f.close()
+##########
+## PLOT ##
+##########
+# create dictionary that maps from parameter set to label
+print("DataFrame acquired. Plotting...")
+parameters_labels_tich = []
+for i in range(len(parameters_tested)):
+    parameters_labels_tich.append(r"$\gamma$ = " + str(parameters_tested[i][0]) +  # r"; $\alpha$ = " + str(parameters_tested[i][1]) + \
+            r"; $\varepsilon$ = " + str(parameters_tested[i][2]))
 
-    for i_test in range(N_tests):
-        i_edges = 0
-        for edge in road_graph.edges:
-            for t in range(T_horiz):
-                uncontrolled_traffic_edge = road_graph[edge[0]][edge[1]]['uncontrolled_traffic']
-                sigma_expected = (torch.sum(x[i_test, :, edge_time_to_index[(edge, t)]], 0) / N_agents)
-                sigma_real = ((count_edge_taken_at_time[
-                                            (index_n, i_test, edge, t)] / n) / N_agents)
-                cost_edges_expected[index_n, i_test, i_edges, t] = road_graph[edge[0]][edge[1]]['travel_time'] * (
-                            1 + 0.15 * ((sigma_expected + (uncontrolled_traffic_edge/N_agents) ) ** 4) / \
-                            ((road_graph[edge[0]][edge[1]]['capacity']) ** 4))
-                cost_edges_real[index_n, i_test, i_edges, t] = road_graph[edge[0]][edge[1]]['travel_time'] * (
-                        1 + 0.15 * ((sigma_real + (uncontrolled_traffic_edge/N_agents) ) ** 4) / \
-                        (( road_graph[edge[0]][edge[1]]['capacity']) ** 4))
-                if np.abs(cost_edges_expected[index_n, i_test, i_edges, t]-cost_edges_real[index_n, i_test, i_edges, t])>0.1 and index_n==2:
-                    print("pause")
-            i_edges = i_edges+1
+parameters_labels_hsdm = []
+for i in parameters_set_to_plot_hsdm:
+    parameters_labels_hsdm.append(r"$\gamma$ = " + str(parameters_tested[i][0]))
 
-cost_dataframe_comparison = pd.DataFrame(columns=['n_vehicles', 'sample'])
-for index_n in range(N_tests_sample_size):
-    n = N_vehicles_per_agent[index_n]
-    for i_test in range(N_tests):
-        for i_edge in range(N_edges):
-            for t in range(T_horiz):
-                if cost_edges_expected[index_n, i_test, i_edge, t].item() >= 0.0001:
-                    cost_diff = np.abs(cost_edges_expected[index_n, i_test, i_edge, t].item()-cost_edges_real[index_n, i_test, i_edge, t].item())/cost_edges_expected[index_n, i_test, i_edge, t].item()
-                    s_row = pd.DataFrame([[n, cost_diff ]],
-                                         columns=['n_vehicles', 'sample'])
-                    cost_dataframe_comparison = cost_dataframe_comparison.append(s_row)
 
-ax = sns.boxplot(x='n_vehicles', y='sample', data=cost_dataframe_comparison, flierprops = dict(marker = 'x', markerfacecolor = '0.50', markersize = 2), palette="bright")
-ax.set_xlabel("V", fontsize=9)
-ax.set_ylabel(r'$\frac{| \ell_e(\sigma^{{M}}_{e,t}) '
-              r'- \ell_e(\hat\sigma^{{M}}_{e,t})|}{\ell_e(\sigma^{{M}}_{e, t})}$', fontsize=9)
-ax.set_yscale('log')
-ax.set_ylim([-0.1, 5])
-ax.set_yticklabels([str(int(k*100))+r'\%' if k!=0 else r'$\pm$'+str(int(k*100))+r'\%' for k in ax.get_yticks()])
-ax.grid(True)
-fig.savefig('Figures/4_comparison_expected_congestion.png')
-fig.savefig('Figures/4_comparison_expected_congestion.pdf')
+fig, ax = plt.subplots(2,2, figsize=(4 * 2, 3.1 * 2), layout='constrained', sharex='col')
+g = sns.lineplot(data=df.loc[ df['Method']==TICH ], drawstyle='steps-pre', errorbar=None, estimator='mean', x='Iteration', palette='bright',
+             y='Residual', hue='Parameters set', linewidth = 2.0, ax=ax[0,0])
+ax[0,0].grid(True)
+ax[0,0].set_yscale('log')
+ax[0,0].set_xscale('log')
+ax[0,0].set_title("Tichonov")
+ax[0,0].set_ylabel("Residual", fontsize = 9)
+ax[0,0].set_xlabel('Iteration', fontsize = 9)
+ax[0,0].set_xlim(1, N_iterations * 10 )
+ax[0,0].set_ylim(ax[0,0].get_ylim()[0]/2, ax[0,0].get_ylim()[1]*2 )
+g.legend(labels = parameters_labels_tich)
 
-plt.show(block="False")
+g= sns.lineplot(data=df.loc[ df['Method']==TICH ], drawstyle='steps-pre', errorbar=None, estimator='mean',  x='Iteration', palette='bright',
+             y='Sel. Fun.', hue='Parameters set', linewidth = 2.0, ax=ax[1,0])
+ax[1,0].grid(True)
+ax[1,0].set_xscale('log')
+# ax[1,0].set_yscale('log')
+ax[1,0].set_ylabel("Sel. Fun.", fontsize = 9)
+ax[1,0].set_xlabel('Iteration', fontsize = 9)
+ax[1,0].set_xlim(1, N_iterations * 10 )
+ax[1,0].set_ylim(ax[1,0].get_ylim()[0]/2, ax[1,0].get_ylim()[1]*2 )
+g.legend(labels = parameters_labels_tich)
 
-f = open('saved_dataframes.pkl', 'wb')
-pickle.dump([cost_dataframe_comparison, costs_dataframe, congestion_dataframe], f)
-f.close()
+g = sns.lineplot(data=df.loc[ df['Method']==HSDM ], drawstyle='steps-pre', errorbar=None, estimator='mean', x='Iteration', palette='bright',
+             y='Residual', hue='Parameters set', linewidth = 2.0, ax=ax[0,1])
+ax[0,1].grid(True)
+ax[0,1].set_xscale('log')
+ax[0,1].set_yscale('log')
+ax[0,1].set_title("HSDM")
+ax[0,1].set_ylabel("Residual", fontsize = 9)
+ax[0,1].set_xlabel('Iteration', fontsize = 9)
+ax[0,1].set_ylim(ax[0,0].get_ylim())
+g.legend(labels = parameters_labels_hsdm)
+
+g = sns.lineplot(data=df.loc[ df['Method']==HSDM ], drawstyle='steps-pre', errorbar=None, estimator='mean', x='Iteration', palette='bright',
+             y='Sel. Fun.', hue='Parameters set', linewidth = 2.0, ax=ax[1,1])
+ax[1,1].grid(True)
+ax[1,1].set_xscale('log')
+# ax[1,1].set_yscale('log')
+ax[1,1].set_ylabel("Sel. Fun.", fontsize = 9)
+ax[1,1].set_xlabel('Iteration', fontsize = 9)
+ax[1,1].set_ylim(ax[1,0].get_ylim())
+g.legend(labels = parameters_labels_hsdm)
+
+plt.show(block=False)
+
+fig.savefig(directory + '/Figures/Parameters_comparison_tichonov_hsdm.png')
+fig.savefig(directory + '/Figures/Parameters_comparison_tichonov_hsdm.pdf')
+
+
+# Plot Tichonov with maximum exponent and minimum epsilon against HSDM with max. exponent and FBF
+index_best_tich = 0
+for i in range(len(parameters_tested)):
+    if parameters_tested[i][0]>=parameters_tested[index_best_tich][0] and parameters_tested[i][2]<=parameters_tested[index_best_tich][2]:
+        index_best_tich = i
+
+index_best_hsdm = 0
+for i in parameters_set_to_plot_hsdm:
+    if parameters_tested[i][0]>=parameters_tested[index_best_hsdm][0]:
+        index_best_hsdm = i
+
+fig, ax = plt.subplots(2,1, figsize=(4 * 2, 3.1 * 2), layout='constrained', sharex='col')
+g= sns.lineplot(data=pd.concat([df.loc[(df['Method']==TICH) & (df['Parameters set']==index_best_tich) ], \
+             df.loc[(df['Method']==HSDM) & (df['Parameters set']==index_best_hsdm)] , \
+             df.loc[(df['Method'] == FBF)] ]) , x='Iteration', palette='bright',
+             y='Residual', hue='Method', linewidth = 2.0, ax=ax[0], errorbar=("se", 2), estimator='mean', n_boot=0)
+
+ax[0].grid(True)
+ax[0].set_yscale('log')
+ax[0].set_xscale('log')
+ax[0].set_title("Tichonov")
+ax[0].set_ylabel("Residual", fontsize = 9)
+ax[0].set_xlabel('Iteration', fontsize = 9)
+ax[0].set_xlim(1, N_iterations * 10 )
+ax[0].set_ylim(10**(-3), 100)
+g.legend(['Tich', 'Conf. interval', 'HSDM', 'Conf. interval', 'FBF', 'Conf. interval'])
+
+g=sns.lineplot(data=pd.concat([df.loc[(df['Method']==TICH) & (df['Parameters set']==index_best_tich) ], \
+             df.loc[(df['Method']==HSDM) & (df['Parameters set']==index_best_hsdm)] , \
+             df.loc[(df['Method'] == FBF) & (df['Parameters set']==0)] ]) ,\
+             x='Iteration', palette='bright',
+             y='Sel. Fun.', hue='Method', linewidth = 2.0, ax=ax[1], errorbar=("se", 2), estimator='mean', n_boot=0)
+
+ax[1].grid(True)
+ax[1].set_yscale('log')
+ax[1].set_xscale('log')
+ax[1].set_title("Tichonov")
+ax[1].set_ylabel("Sel. Fun.", fontsize = 9)
+ax[1].set_xlabel('Iteration', fontsize = 9)
+ax[1].set_xlim(1, N_iterations * 10 )
+g.legend(['Tich', 'Conf. interval', 'HSDM', 'Conf. interval', 'FBF', 'Conf. interval'])
+
+plt.show(block=False)
+
+fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.png')
+fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.pdf')
+
+
 print("Done")

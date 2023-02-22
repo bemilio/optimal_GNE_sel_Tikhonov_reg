@@ -5,6 +5,8 @@ import pickle
 from GNE_distrib_selection import pFB_tich_prox_distr_algorithm, FBF_HSDM_distr_algorithm
 from GNE_distrib import FBF_distr_algorithm
 from RadioCommSetup import RadioCommSetup
+from RandomLinearSetup import RandomLinearSetup
+
 from GameDefinition import Game
 import time
 import logging
@@ -17,7 +19,7 @@ if __name__ == '__main__':
         print("WARNING: test game will be used.")
         logging.info("WARNING: test game will be used.")
     if len(sys.argv) < 2:
-        seed = 9
+        seed = 0
         job_id=0
     else:
         seed=int(sys.argv[1])
@@ -28,12 +30,12 @@ if __name__ == '__main__':
     N_iter=100000
     N_it_per_residual_computation = 10
     N_agents = 15
-    n_channels = 64
-    n_neighbors = 6 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
-    P_max_shared = 2 # Max power that can go on a channel
+    n_channels = 10
+    n_neighbors = 4 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
     P_max_local = torch.ones(N_agents,1) # Max power that each agent can output (cumulative on all channels).
                                          # By the reformulation of Scutari, this is used in en EQUALITY constraint
                                          # (so the power output is = P_max)
+    P_max_shared = 1*torch.sum(P_max_local).item()/(n_channels) # Max power that can go on a channel
     if P_max_shared < torch.sum(P_max_local).item()/n_channels:
         raise ValueError("The shared constraint is infeasible: increase power allowed on each channel")
     N_random_tests = 1
@@ -68,7 +70,8 @@ if __name__ == '__main__':
         taps_filter = (1/n_taps) * torch.from_numpy(np.random.rand(N_agents, N_agents, n_taps))
         # Make symmetric with respect to agents
         taps_filter = 0.5*(taps_filter + torch.transpose(taps_filter, 0,1))
-        game_params = RadioCommSetup(N_agents, n_channels, P_max_shared, P_max_local, taps_filter, comm_graph)
+        # game_params = RadioCommSetup(N_agents, n_channels, P_max_shared, P_max_local, taps_filter, comm_graph)
+        game_params = RandomLinearSetup(N_agents, n_channels,  P_max_shared, P_max_local, comm_graph, seed)
         print("Initializing game for test " + str(test) + " out of " +str(N_random_tests))
         logging.info("Initializing game for test " + str(test) + " out of " +str(N_random_tests))
         ##########################################
@@ -112,7 +115,7 @@ if __name__ == '__main__':
         ##########################################
         for index_parameter_set in range(len(parameters_to_test)):
             parameter_set = parameters_to_test[index_parameter_set]
-            x_0 = torch.zeros(game.N_agents, game.n_opt_variables, 1) #torch.from_numpy(np.random.rand(game.N_agents, game.n_opt_variables, 1))
+            x_0 = torch.from_numpy(np.random.rand(game.N_agents, game.n_opt_variables, 1)) #torch.zeros(game.N_agents, game.n_opt_variables, 1) #
 
             alg_tich = pFB_tich_prox_distr_algorithm(game, x_0=x_0,
                                                      exponent_vanishing_precision=parameter_set[2]*parameter_set[0],

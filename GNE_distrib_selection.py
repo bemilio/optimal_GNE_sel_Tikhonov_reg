@@ -30,7 +30,7 @@ class pFB_tich_prox_distr_algorithm:
         q = torch.zeros(N_agents, n, 1)
         self.projection = BackwardStep(Q, q, game.A_ineq_loc, game.b_ineq_loc, game.A_eq_loc, game.b_eq_loc,1)
         self.eps_tich = lambda t: t**(-1*exponent_vanishing_precision)
-        self.weight_sel = lambda t: .1*(t**(-1*exponent_vanishing_selection))
+        self.weight_sel = lambda t: (t**(-1*exponent_vanishing_selection))
         self.alpha_tich_regul = alpha_tich_regul
         self.outer_iter = 1
 

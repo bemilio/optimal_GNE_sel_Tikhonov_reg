@@ -32,19 +32,17 @@ class RadioCommSetup:
     def define_cost_functions(self, N, taps_filter, n_channels, comm_graph):
         M = torch.zeros(N, N, n_channels, n_channels)
         for i in range(N):
-            M[i, i, :, :] = torch.eye(n_channels)
             for j in comm_graph.neighbors(i): # Allow cross-interference only if agents can communicate
                 w, h = freqz(taps_filter[i, j, :], worN=n_channels)
                 M[i, j, :, :] = torch.diag(torch.from_numpy(absolute(h)))
         c = torch.zeros(N, n_channels, 1)
         for i in range(N):
-            c[i, :, :] = torch.div(torch.ones(n_channels,1), torch.diag(M[i,i,:,:]).unsqueeze(1))   # c_i = sigma_i/|H_ii(k)|
+            c[i, :, :] = torch.ones(n_channels,1)  # c_i = sigma_i/|H_ii(k)|
         # Make matrix positive semidefinite
         min_eig = self.get_min_eig_game(M)
-        M_trans = M
+        M_trans = -torch.sign(min_eig) * M / torch.abs(min_eig)
         for i in range(N):
-            M_trans[i, i, :, :] = M[i, i, :, :]-min_eig * torch.eye(n_channels)
-        M_trans = M_trans / (1-min_eig)
+            M_trans[i, i, :, :] = torch.eye(n_channels)
         min_eig_transformed = self.get_min_eig_game(M_trans)
         eps = 10 ** (-10)
         if min_eig_transformed< -1*eps:
