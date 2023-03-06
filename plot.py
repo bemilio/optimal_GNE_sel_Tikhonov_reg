@@ -21,17 +21,17 @@ FBF=2
 
 method_name= { TICH: "Tich", HSDM:"HSDM", FBF:"FBF"}
 load_files_from_current_dir = False
-create_new_dataframe_file = False
+create_new_dataframe_file = True
 if load_files_from_current_dir:
     directory = "."
 else:
-    directory = r"/Users/ebenenati/surfdrive/TUDelft/Simulations/Cross_interference/Tichonov_vs_HSDm/23_02_23"
+    directory = r"/Users/ebenenati/surfdrive/TUDelft/Simulations/Cross_interference/Tichonov_vs_HSDm/24_02_23"
 if not os.path.exists(directory + "/Figures"):
     os.makedirs(directory + r"/Figures")
 
 if create_new_dataframe_file or not os.path.exists('saved_dataframe.pkl'):
     if  create_new_dataframe_file:
-        print("DataFrame file will be recreated as requested.  This will take a while.")
+        print("DataFrame file will be recreated as requested. This will take a while.")
     else:
         print("File containing the DataFrame not found, it will be created. This will take a while.")
     #### Toggle between loading saved file in this directory or all files in a specific directory
@@ -90,8 +90,57 @@ if create_new_dataframe_file or not os.path.exists('saved_dataframe.pkl'):
     N_parameters = 3 # parameters_to_test is a list of tuples, each tuple contains N_parameters
     N_agents = x_store_tich.size(2)
     N_opt_var = x_store_tich.size(3)
+    Steps_between_iterations = 10
     N_iterations = residual_store_tich.size(2)
     N_methods = 3 # tichonov, hsdm, standard
+
+
+    fig, ax = plt.subplots(2, 1, figsize=(4 * 1, 3.1 * 1), layout='constrained', sharex='col')
+    x = range(1,Steps_between_iterations*N_iterations, Steps_between_iterations)
+    ax[0].plot(x,torch.mean(residual_store_std[:,4,:], dim=0), color='k', label="FBF")
+    ax[0].fill_between(x,torch.min(residual_store_std[:,4,:], dim=0)[0].numpy(), \
+                     y2=torch.max(residual_store_std[:,4,:], dim=0)[0].numpy(), alpha=0.2, color='k')
+    ax[0].plot(x, torch.mean(residual_store_hsdm[:,4,:], dim=0), color='g', label="HSDM")
+    ax[0].fill_between(x, torch.min(residual_store_hsdm[:,4,:], dim=0)[0].numpy(),\
+                     y2=torch.max(residual_store_hsdm[:,4,:], dim=0)[0].numpy(), alpha=0.2, color='g')
+    ax[0].plot(x, torch.mean(residual_store_tich[:,4,:], dim=0), color='m', label="Tichonov")
+    ax[0].fill_between(x, torch.min(residual_store_tich[:,4,:], dim=0)[0].numpy(), \
+                     y2=torch.max(residual_store_tich[:,4,:], dim=0)[0].numpy(), alpha=0.2, color='m')
+    ax[0].grid(True)
+    ax[0].set_yscale('log')
+    ax[0].set_xscale('log')
+    ax[0].set_ylabel("Residual", fontsize=9)
+    ax[0].set_xlim(1, N_iterations * 10)
+    plt.legend()
+
+    ax[1].plot(x, torch.mean(sel_func_store_std[:,4,:], dim=0), color='k', label="FBF")
+    ax[1].fill_between(x, torch.min(sel_func_store_std[:,4,:], dim=0)[0].numpy(), \
+                     y2=torch.max(sel_func_store_std[:,4,:], dim=0)[0].numpy(), alpha=0.2, color='k')
+    relative_advantage_hsdm = sel_func_store_hsdm[:,4,:] - sel_func_store_std[:,4,:]
+    # ax[1].plot(x, torch.mean(relative_advantage_hsdm, dim=0) , color='g', label="HSDM")
+    # ax[1].fill_between(x, torch.min(relative_advantage_hsdm, dim=0)[0].numpy(),\
+    #                  y2=torch.max(relative_advantage_hsdm, dim=0)[0].numpy(), alpha=0.2, color='g')
+    ax[1].plot(x, torch.mean(sel_func_store_hsdm[:,4,:], dim=0), color='g', label="HSDM")
+    ax[1].fill_between(x, torch.min(sel_func_store_hsdm[:,4,:], dim=0)[0].numpy(), \
+                     y2=torch.max(sel_func_store_hsdm[:,4,:], dim=0)[0].numpy(), alpha=0.2, color='g')
+    # relative_advantage_tich = torch.div(sel_func_store_tich[:,4,:] - sel_func_store_std[:,4,:], torch.abs(sel_func_store_std[:,4,:]) )
+    relative_advantage_tich = sel_func_store_tich[:,4,:] - sel_func_store_std[:,4,:]
+    # ax[1].plot(x, torch.mean(relative_advantage_tich, dim=0), color='m', label="Tichonov")
+    # ax[1].fill_between(x, torch.min(relative_advantage_tich, dim=0)[0].numpy(), \
+    #                  y2=torch.max(relative_advantage_tich, dim=0)[0].numpy(), alpha=0.2, color='m')
+    ax[1].plot(x, torch.mean(sel_func_store_tich[:,4,:], dim=0), color='m', label="Tichonov")
+    ax[1].fill_between(x, torch.min(sel_func_store_tich[:,4,:], dim=0)[0].numpy(), \
+                     y2=torch.max(sel_func_store_tich[:,4,:], dim=0)[0].numpy(), alpha=0.2, color='m')
+    ax[1].grid(True)
+    ax[1].set_xscale('log')
+    ax[1].set_ylabel("Sel. Fun.", fontsize=9)
+    ax[1].set_xlabel('Iteration', fontsize=9)
+    ax[1].set_xlim(1, N_iterations * 10)
+    plt.legend()
+    plt.show(block=False)
+
+    fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.png')
+    fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.pdf')
 
     torch.Tensor.ndim = property(lambda self: len(self.shape))  # Necessary to use matplotlib with tensors
 
@@ -148,6 +197,8 @@ if create_new_dataframe_file or not os.path.exists('saved_dataframe.pkl'):
     pickle.dump([df, parameters_tested, N_iterations, parameters_set_to_plot_hsdm], f)
     f.close()
     print("DataFrame file created.")
+
+
 else:
     f = open('saved_dataframe.pkl', 'rb')
     df, parameters_tested, N_iterations, parameters_set_to_plot_hsdm = pickle.load(f)
@@ -229,41 +280,43 @@ for i in parameters_set_to_plot_hsdm:
     if parameters_tested[i][0]>=parameters_tested[index_best_hsdm][0]:
         index_best_hsdm = i
 
-fig, ax = plt.subplots(2,1, figsize=(4 * 2, 3.1 * 2), layout='constrained', sharex='col')
-g= sns.lineplot(data=pd.concat([df.loc[(df['Method']==TICH) & (df['Parameters set']==index_best_tich) ], \
-             df.loc[(df['Method']==HSDM) & (df['Parameters set']==index_best_hsdm)] , \
-             df.loc[(df['Method'] == FBF)] ]) , x='Iteration', palette='bright',
-             y='Residual', hue='Method', linewidth = 2.0, ax=ax[0], errorbar=("se", 2), estimator='mean', n_boot=0)
+# fig, ax = plt.subplots(2,1, figsize=(4 * 2, 3.1 * 2), layout='constrained', sharex='col')
+# g= sns.lineplot(data=pd.concat([df.loc[(df['Method']==TICH) & (df['Parameters set']==index_best_tich) ], \
+#              df.loc[(df['Method']==HSDM) & (df['Parameters set']==index_best_hsdm)] , \
+#              df.loc[(df['Method'] == FBF)] ]) , x='Iteration', palette='bright',
+#              y='Residual', hue='Method', linewidth = 2.0, ax=ax[0], errorbar=("se", 2), estimator='mean', n_boot=0)
+#
+# ax[0].grid(True)
+# ax[0].set_yscale('log')
+# ax[0].set_xscale('log')
+# ax[0].set_title("Tichonov")
+# ax[0].set_ylabel("Residual", fontsize = 9)
+# ax[0].set_xlabel('Iteration', fontsize = 9)
+# ax[0].set_xlim(1, N_iterations * 10 )
+# ax[0].set_ylim(10**(-3), 100)
+# g.legend(['Tich', 'Conf. interval', 'HSDM', 'Conf. interval', 'FBF', 'Conf. interval'])
+#
+# g = plt.plot()
+#
+# g=sns.lineplot(data=pd.concat([df.loc[(df['Method']==TICH) & (df['Parameters set']==index_best_tich) ], \
+#              df.loc[(df['Method']==HSDM) & (df['Parameters set']==index_best_hsdm)] , \
+#              df.loc[(df['Method'] == FBF) & (df['Parameters set']==0)] ]) ,\
+#              x='Iteration', palette='bright',
+#              y='Sel. Fun.', hue='Method', linewidth = 2.0, ax=ax[1], errorbar=("se", 2), estimator='mean', n_boot=0)
+#
+# ax[1].grid(True)
+# ax[1].set_yscale('log')
+# ax[1].set_xscale('log')
+# ax[1].set_title("Tichonov")
+# ax[1].set_ylabel("Sel. Fun.", fontsize = 9)
+# ax[1].set_xlabel('Iteration', fontsize = 9)
+# ax[1].set_xlim(1, N_iterations * 10 )
+# g.legend(['Tich', 'Conf. interval', 'HSDM', 'Conf. interval', 'FBF', 'Conf. interval'])
+#
+# plt.show(block=False)
 
-ax[0].grid(True)
-ax[0].set_yscale('log')
-ax[0].set_xscale('log')
-ax[0].set_title("Tichonov")
-ax[0].set_ylabel("Residual", fontsize = 9)
-ax[0].set_xlabel('Iteration', fontsize = 9)
-ax[0].set_xlim(1, N_iterations * 10 )
-ax[0].set_ylim(10**(-3), 100)
-g.legend(['Tich', 'Conf. interval', 'HSDM', 'Conf. interval', 'FBF', 'Conf. interval'])
-
-g=sns.lineplot(data=pd.concat([df.loc[(df['Method']==TICH) & (df['Parameters set']==index_best_tich) ], \
-             df.loc[(df['Method']==HSDM) & (df['Parameters set']==index_best_hsdm)] , \
-             df.loc[(df['Method'] == FBF) & (df['Parameters set']==0)] ]) ,\
-             x='Iteration', palette='bright',
-             y='Sel. Fun.', hue='Method', linewidth = 2.0, ax=ax[1], errorbar=("se", 2), estimator='mean', n_boot=0)
-
-ax[1].grid(True)
-ax[1].set_yscale('log')
-ax[1].set_xscale('log')
-ax[1].set_title("Tichonov")
-ax[1].set_ylabel("Sel. Fun.", fontsize = 9)
-ax[1].set_xlabel('Iteration', fontsize = 9)
-ax[1].set_xlim(1, N_iterations * 10 )
-g.legend(['Tich', 'Conf. interval', 'HSDM', 'Conf. interval', 'FBF', 'Conf. interval'])
-
-plt.show(block=False)
-
-fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.png')
-fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.pdf')
+# fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.png')
+# fig.savefig(directory + '/Figures/Method_comparison_HSDM_tich_FBF.pdf')
 
 
 print("Done")

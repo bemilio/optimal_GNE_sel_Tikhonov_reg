@@ -4,9 +4,8 @@ from numpy import absolute
 from numpy import random
 
 class RandomLinearSetup:
-    def __init__(self, N_agents, n_opt_var, x_max_shared, x_max_loc, comm_graph, seed):
+    def __init__(self, N_agents, n_opt_var, x_max_shared, x_max_loc, comm_graph):
         self.n_opt_variables = n_opt_var
-        random.seed(seed)
         self.Q,self.c = self.define_cost_functions(N_agents, n_opt_var, comm_graph)
         self.A_ineq_loc_const, self.b_ineq_loc_const,\
         self.A_eq_loc_const, self.b_eq_loc_const, \
@@ -24,13 +23,14 @@ class RandomLinearSetup:
         Q_sel_fun = torch.zeros(N_agents, N_agents, n_opt_var, n_opt_var)
         Q_rand = 0.1*torch.from_numpy(random.rand(N_agents*n_opt_var, N_agents*n_opt_var))
         Q_rand = (torch.transpose(Q_rand,0,1) + Q_rand)/2
-        c_sel_fun = torch.from_numpy(random.randn(N_agents, n_opt_var, 1))
+        c_sel_fun = torch.from_numpy(10*random.randn(N_agents, n_opt_var, 1))
         for i in range(N_agents):
             for j in comm_graph.neighbors(i): # Allow cost only if agents can communicate
                 Q_sel_fun[i,j,:,:] = Q_rand[i*n_opt_var:(i+1)*n_opt_var, j*n_opt_var:(j+1)*n_opt_var]
         min_eig = self.get_min_eig_game(Q_sel_fun)
+        additive_constant = random.rand() # add an identity times this constant (to make the sel. fun. str. convex)
         for i in range(N_agents):
-            Q_sel_fun[i,i,:,:] = Q_sel_fun[i,i,:,:] - min_eig * torch.eye(n_opt_var)
+            Q_sel_fun[i,i,:,:] = Q_sel_fun[i,i,:,:] + (additive_constant - min_eig) * torch.eye(n_opt_var)
         min_eig_transformed = self.get_min_eig_game(Q_sel_fun)
         eps = 10 ** (-10)
         if min_eig_transformed < -1 * eps:
@@ -52,7 +52,6 @@ class RandomLinearSetup:
             Q[i, i, :, :] = M[i * n_opt_var:(i + 1) * n_opt_var, i * n_opt_var:(i + 1) * n_opt_var]
             for j in comm_graph.neighbors(i):  # Allow cost only if agents can communicate
                 Q[i, j, :, :] = M[i * n_opt_var:(i + 1) * n_opt_var, j * n_opt_var:(j + 1) * n_opt_var]
-
         min_eig = self.get_min_eig_game(Q)
         eps = 10 ** (-10)
         if min_eig< -1*eps:

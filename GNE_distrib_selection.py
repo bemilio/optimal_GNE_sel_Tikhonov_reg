@@ -26,6 +26,8 @@ class pFB_tich_prox_distr_algorithm:
         else:
             self.aux = torch.zeros(N_agents,m, 1)
         self.x_pivot = self.x # used for tichonov regularization. It is updated at every outer iteration.
+        self.dual_pivot = self.dual # used for tichonov regularization. It is updated at every outer iteration.
+        self.aux_pivot = self.aux  # used for tichonov regularization. It is updated at every outer iteration.
         Q = torch.zeros(N_agents, n, n) # Local cost is zero
         q = torch.zeros(N_agents, n, 1)
         self.projection = BackwardStep(Q, q, game.A_ineq_loc, game.b_ineq_loc, game.A_eq_loc, game.b_eq_loc,1)
@@ -42,12 +44,14 @@ class pFB_tich_prox_distr_algorithm:
         b_i = self.game.b_ineq_shared
         r = self.game.F(x)
         sel = self.weight_sel(self.outer_iter) * self.game.nabla_phi(x)
-        tich = self.alpha_tich_regul * (x - self.x_pivot)
-        x_new, status = self.projection(x - self.primal_stepsize * (r + sel + tich + torch.bmm(torch.transpose(A_i, 1, 2), self.dual ) ) )
-        aux_new = aux - self.consensus_stepsize * self.game.K(dual)
+        tich_x = self.alpha_tich_regul * (x - self.x_pivot)
+        tich_dual = 0 # self.alpha_tich_regul * (dual - self.dual_pivot)
+        tich_aux = 0 #self.alpha_tich_regul * (aux - self.aux_pivot)
+        x_new, status = self.projection(x - self.primal_stepsize * (r + sel + tich_x + torch.bmm(torch.transpose(A_i, 1, 2), self.dual ) ) )
+        aux_new = aux - self.consensus_stepsize * (tich_aux + self.game.K(dual))
         d = 2 * torch.bmm(A_i, x_new) - torch.bmm(A_i, x) - b_i
         # Dual update
-        dual_new = torch.maximum(dual + self.dual_stepsize * ( d + self.game.K(2*aux_new - aux) - self.game.K(dual)), torch.zeros(dual.size()))
+        dual_new = torch.maximum(dual + self.dual_stepsize * ( d - tich_dual + self.game.K(2*aux_new - aux) - self.game.K(dual)), torch.zeros(dual.size()))
         if torch.norm(x-x_new) + torch.norm(dual-dual_new) + torch.norm(aux-aux_new) <= self.eps_tich(self.outer_iter):
             self.outer_iter = self.outer_iter + 1
             self.x_pivot = x_new
