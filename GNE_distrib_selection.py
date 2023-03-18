@@ -32,7 +32,7 @@ class pFB_tich_prox_distr_algorithm:
         q = torch.zeros(N_agents, n, 1)
         self.projection = BackwardStep(Q, q, game.A_ineq_loc, game.b_ineq_loc, game.A_eq_loc, game.b_eq_loc,1)
         self.eps_tich = lambda t: t**(-1*exponent_vanishing_precision)
-        self.weight_sel = lambda t: (t**(-1*exponent_vanishing_selection))
+        self.weight_sel = lambda t: .01*(t**(-1*exponent_vanishing_selection))
         self.alpha_tich_regul = alpha_tich_regul
         self.outer_iter = 1
 
@@ -75,19 +75,23 @@ class pFB_tich_prox_distr_algorithm:
         return residual
 
     def set_stepsize_using_Lip_const(self, safety_margin=.5):
-        #compute stepsizes as (1/L)*safety_margin, where L is the lipschitz constant of the forward operator
+        # The names of the quantities are as in the paper
         N = self.x.size(0)
         n_x = self.x.size(1)
         n_constr = self.game.A_ineq_shared.size(1)
         mu_pseudog, Lip_pseudog = self.game.F.get_strMon_Lip_constants()
         mu_sel_fun, Lip_sel_fun = self.game.phi.get_strMon_Lip_constants()
-        str_mon = mu_sel_fun + self.alpha_tich_regul + mu_pseudog
+        # str_mon = mu_sel_fun + self.alpha_tich_regul + mu_pseudog
         max_neigh = max([torch.abs(self.game.K.L[i, i, 0, 0]).item() for i in range(N)]) # The diagonal of the Laplacian matrix contains the node degree
         max_A = torch.max(torch.sum(torch.abs(self.game.A_ineq_shared),dim=2)).item()
-        delta = (1/(safety_margin*min( str_mon, (2/max_neigh)) ) )
-        self.primal_stepsize = 1/(max_A + delta)
-        self.dual_stepsize = 1 / (max_A + 2*max_neigh + delta)
-        self.consensus_stepsize = 1 / ( 2 * max_neigh + delta)
+        L_G = max(Lip_pseudog, 2*max_neigh) + self.alpha_tich_regul + self.weight_sel(1) * Lip_sel_fun
+        r_x = max_A
+        r_lambda = max_A + 2* max_neigh
+        r_nu = 2* max_neigh
+        delta = 1.1*max( L_G*L_G/self.alpha_tich_regul, 2*r_x, 2*r_lambda, 2*r_nu ) # The 1.1 is only to make delta strictly greater than the r.h.s
+        self.primal_stepsize =  safety_margin * (2*delta - r_x)**(-1) + (1-safety_margin)*(r_x + delta)**(-1)
+        self.dual_stepsize = safety_margin * (2*delta - r_lambda)**(-1) + (1-safety_margin)*(r_lambda + delta)**(-1)
+        self.consensus_stepsize = safety_margin * (2*delta - r_nu)**(-1) + (1-safety_margin)*( r_nu + delta)**(-1)
 
 class FBF_HSDM_distr_algorithm:
     def __init__(self, game, x_0=None, dual_0=None, aux_0=None,
@@ -114,7 +118,7 @@ class FBF_HSDM_distr_algorithm:
         Q = torch.zeros(N_agents, n, n) # Local cost is zero
         q = torch.zeros(N_agents, n, 1)
         self.projection = BackwardStep(Q, q, game.A_ineq_loc, game.b_ineq_loc, game.A_eq_loc, game.b_eq_loc,1)
-        self.weight_sel = lambda t: .1*(t**(-1*exponent_vanishing_selection))
+        self.weight_sel = lambda t: .01*(t**(-1*exponent_vanishing_selection))
         self.iteration = 1
 
     def run_once(self):

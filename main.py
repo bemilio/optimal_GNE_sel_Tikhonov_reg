@@ -29,7 +29,7 @@ if __name__ == '__main__':
     np.random.seed(seed)
     N_iter=100000
     N_it_per_residual_computation = 10
-    N_agents = 10
+    N_agents = 20
     n_channels = 5
     n_neighbors = 4 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
     P_max_local = torch.ones(N_agents,1) # Max power that each agent can output (cumulative on all channels).
@@ -38,7 +38,7 @@ if __name__ == '__main__':
     P_max_shared = 1*torch.sum(P_max_local).item()/(n_channels) # Max power that can go on a channel
     if P_max_shared < torch.sum(P_max_local).item()/n_channels:
         raise ValueError("The shared constraint is infeasible: increase power allowed on each channel")
-    N_random_tests = 2
+    N_random_tests = 1
     n_taps = 10 # order of the filters
     is_connected = False
     comm_graph = nx.random_regular_graph(n_neighbors, N_agents)
