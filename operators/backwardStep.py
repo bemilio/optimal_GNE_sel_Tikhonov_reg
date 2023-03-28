@@ -15,7 +15,7 @@ class BackwardStep(torch.nn.Module):
         eps = 0.000001
         if solver == 'OSQP':
 
-            Q = torch.add(alpha * Q,  torch.from_numpy(np.eye(Q.size(1))))  # batched sum
+            Q = torch.add( Q,  alpha * torch.from_numpy(np.eye(Q.size(1))))  # batched sum
             self.Q=[]
             self.A_ineq = []
             self.b_ineq = []
@@ -61,7 +61,7 @@ class BackwardStep(torch.nn.Module):
 
     def forward(self, x):
         pad = torch.nn.ConstantPad2d((0, 0, 0, self.n_soft_constraints), 0)
-        q2 = torch.add(self.alpha * self.q,  - pad(x)) # Batched sum
+        q2 = torch.add(self.q,  - self.alpha * pad(x)) # Batched sum
         # y = QPFunction(eps=1e-6, verbose=1, maxIter=10, check_Q_spd=False)(self.Q, q2.flatten(1), self.A_ineq, self.b_ineq.flatten(1), self.A_eq, self.b_eq)
         # return y.unsqueeze(2)
 

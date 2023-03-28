@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import networkx as nx
 from cmath import inf
+from operators import backwardStep
 
 torch.set_default_dtype(torch.float64)
 
@@ -111,13 +112,14 @@ class Game:
             if Q_sel is not None and c_sel is not None:
                 self.Q = Q_sel
                 self.c = c_sel
+                self.weight_dual = 10**(-3)
                 self.is_active = True
             else:
                 self.is_active = False
 
-        def forward(self, x):
+        def forward(self, x, dual, aux):
             if self.is_active:
-                return torch.sum(torch.matmul(self.Q, x),dim=1) + self.c
+                return torch.sum(torch.matmul(self.Q, x),dim=1) + self.c, -self.weight_dual * dual, -self.weight_dual * aux
             else:
                 return 0*x
 
@@ -127,14 +129,17 @@ class Game:
             if Q_sel is not None and c_sel is not None:
                 self.Q = Q_sel
                 self.c = c_sel
+                self.weight_dual = 10**(-3)
                 self.is_active = True
             else:
                 self.is_active = False
 
-        def forward(self, x):
+        def forward(self, x, dual, aux):
             # Cost is .5*x'Qx + c'x,  where Q is a block-diagonal matrix stored in a tensor N*N*n*n. The i,j-th block is in Q[i,j,:,:].
             if self.is_active:
-                return torch.sum(torch.bmm(x.transpose(1,2), .5*torch.sum(torch.matmul(self.Q, x),dim=1) + self.c))
+                return torch.sum(torch.bmm(x.transpose(1,2), .5*torch.sum(torch.matmul(self.Q, x),dim=1) + self.c)) + \
+                       .5*self.weight_dual* torch.sum(torch.bmm(torch.transpose(dual, dim0=1, dim1=2), dual), dim=0) + \
+                       .5*self.weight_dual* torch.sum(torch.bmm(torch.transpose(aux, dim0=1, dim1=2), aux), dim=0)
             else:
                 return torch.tensor(0)
 
@@ -165,7 +170,7 @@ class Game:
         A_shared = torch.zeros((2, 1, 1))
         A_shared[0, 0, 0] = -1
         A_shared[1, 0, 0] = 1
-        b_shared = torch.zeros(1)
+        b_shared = torch.zeros(2,1,1)
         A_eq_loc = torch.zeros(2,1,1)
         A_ineq_loc = torch.zeros(2,1,1)
         b_eq_loc = torch.zeros(2,1,1)
@@ -176,3 +181,48 @@ class Game:
         return N,n_opt_var,Q,c,Q_sel,c_sel,A_shared,b_shared, A_eq_loc, A_ineq_loc, b_eq_loc, b_ineq_loc, communication_graph
 
 
+    # def computeOptimalSelection(self): #Finds a STRICTLY FEASIBLE optimal GNE selection
+    #     # Compute exact optimal selection via a QP
+    #     n_local_ineq_constr = self.A_ineq_loc.size(1)
+    #     n_local_eq_constr = self.A_eq_loc.size(1)
+    #     N = self.N_agents
+    #     n_x = self.F.Q.size(2)
+    #     A_ineq_all = torch.zeros(
+    #         (1, N * n_local_ineq_constr + self.n_shared_ineq_constr, N * self.n_opt_variables))
+    #     b_ineq_all = torch.zeros((1, N * n_local_ineq_constr + self.n_shared_ineq_constr, 1))
+    #     A_eq_all = torch.zeros(
+    #         (1, N * n_local_eq_constr + self.n_shared_ineq_constr, N * self.n_opt_variables))
+    #     b_eq_all = torch.zeros((1, N * n_local_eq_constr + self.n_shared_ineq_constr, 1))
+    #     for i in range(N):
+    #         A_ineq_all[0,i * n_local_ineq_constr:(i + 1) * n_local_ineq_constr,
+    #             i * self.n_opt_variables:(i + 1) * self.n_opt_variables] = self.A_ineq_loc[i, :, :]
+    #         b_ineq_all[0,i * n_local_ineq_constr:(i + 1) * n_local_ineq_constr, :] = self.b_ineq_loc[i, :, :]
+    #         A_eq_all[0,i * n_local_eq_constr:(i + 1) * n_local_eq_constr,
+    #             i * self.n_opt_variables:(i + 1) * self.n_opt_variables] = self.A_eq_loc[i, :, :]
+    #         b_eq_all[0,i * n_local_eq_constr:(i + 1) * n_local_eq_constr, :] = self.b_eq_loc[i, :, :]
+    #         A_ineq_all[0,-self.n_shared_ineq_constr:,
+    #             i * self.n_opt_variables:(i + 1) * self.n_opt_variables] = self.A_ineq_shared[i, :, :]
+    #         b_ineq_all[0,-self.n_shared_ineq_constr:, :] = b_ineq_all[0,-self.n_shared_ineq_constr:,
+    #                                                           :] + self.b_ineq_shared[i, :, :]
+    #
+    #     A_optimality = torch.zeros(1, N * n_x, N * n_x)
+    #     b_optimality = torch.zeros(1, N * n_x, 1)
+    #     Q_sel = torch.zeros(1, N * n_x, N * n_x)
+    #     c_sel = torch.zeros(1, N * n_x, 1)
+    #
+    #     for i in range(N):
+    #         for j in range(N):
+    #             A_optimality[0, i * n_x:(i + 1) * n_x, j * n_x:(j + 1) * n_x] = self.F.Q[i, j, :, :]
+    #             Q_sel[0, i * n_x:(i + 1) * n_x, j * n_x:(j + 1) * n_x] = self.phi.Q[i, j, :, :]
+    #         b_optimality[0, i * n_x:(i + 1) * n_x] = self.F.c[i,:,:]
+    #         c_sel[0, i * n_x:(i + 1) * n_x] = self.phi.c[i,:,:]
+    #
+    #     A_eq_with_optimality = torch.cat((A_eq_all, A_optimality), dim=1)
+    #     b_eq_with_optimality = torch.cat((b_eq_all, b_optimality), dim=1)
+    #     solver = backwardStep.BackwardStep(Q_sel, c_sel, A_ineq_all, b_ineq_all, A_eq_with_optimality, b_eq_with_optimality, alpha=0)
+    #     x_opt, status = solver(torch.zeros(1,N*n_x,1))
+    #     x_opt_reshape = torch.zeros(N, n_x,1)
+    #     for i in range(N):
+    #         x_opt_reshape[i,:,:] = x_opt[0,i * n_x:(i + 1) * n_x,:]
+    #     phi_opt = self.phi(x_opt_reshape)
+    #     return x_opt_reshape, phi_opt

@@ -72,14 +72,10 @@ class RandomLinearSetup:
         return min_eig
 
     def define_local_constraints(self, N_agents, n_channels, P_max_local):
-        # Sum power over channels = P_max
-        # sum_k x_k = P_max
-        # Num of local constr: Number of channels
         n_local_const_eq = 1
         A_eq_loc_const = torch.zeros(N_agents, n_local_const_eq, self.n_opt_variables)
         b_eq_loc_const = torch.zeros(N_agents, n_local_const_eq, 1)
 
-        # Num of local inequality constraints: Power are positive (N_channels)
         n_local_const_ineq = 2 * n_channels
         A_ineq_loc_const = torch.zeros(N_agents, n_local_const_ineq, self.n_opt_variables)
         b_ineq_loc_const = torch.zeros(N_agents, n_local_const_ineq, 1)

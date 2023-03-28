@@ -19,7 +19,7 @@ if __name__ == '__main__':
         print("WARNING: test game will be used.")
         logging.info("WARNING: test game will be used.")
     if len(sys.argv) < 2:
-        seed = 0
+        seed = 1
         job_id=0
     else:
         seed=int(sys.argv[1])
@@ -27,9 +27,9 @@ if __name__ == '__main__':
     print("Random seed set to  " + str(seed))
     logging.info("Random seed set to  " + str(seed))
     np.random.seed(seed)
-    N_iter=100000
+    N_iter=1000000
     N_it_per_residual_computation = 10
-    N_agents = 20
+    N_agents = 10
     n_channels = 5
     n_neighbors = 4 # for simplicity, each agent has the same number of neighbours. This is only used to create the communication graph (but i's not needed otherwise)
     P_max_local = torch.ones(N_agents,1) # Max power that each agent can output (cumulative on all channels).
@@ -47,18 +47,20 @@ if __name__ == '__main__':
     #  Define alg. parameters to test        #
     ##########################################
 
-    exponent_sel_fun_to_test = [0.6, 0.8, 1.] # The selection function weight decades as 1/k^exp
-    tichonov_inertia_to_test = [0.1, 1] # weight that multiplies \|x-x_k\| in the tich. reg. problem
-    tichonov_epsilon_wrt_sel_fun_to_test = [1, 2., 4., 8.] # The approx. error in the tich.reg. problem evolves as 1/k^(p*exp), where p is this parameter and exp is the first parameter
+    exponent_sel_fun_to_test_tich = [0.3, .6, 1.] # The selection function weight decades as 1/k^exp
+    exponent_sel_fun_to_test_hsdm = [0.7]  # The selection function weight decades as 1/k^exp
+    tichonov_inertia_to_test = [.1, 1.] # weight that multiplies \|x-x_k\| in the tich. reg. problem
+    tichonov_epsilon_wrt_sel_fun_to_test = [2., 4., 6.] # The approx. error in the tich.reg. problem evolves as 1/k^(p*exp), where p is this parameter and exp is the first parameter
     parameters_to_test_hsdm=[]
     parameters_to_test_tich=[]
-    for par_1 in exponent_sel_fun_to_test:
-        parameters_to_test_hsdm.append((par_1,))
+    for par in exponent_sel_fun_to_test_hsdm:
+        parameters_to_test_hsdm.append((par,))
+    for par_1 in exponent_sel_fun_to_test_tich:
         for par_2 in tichonov_inertia_to_test:
             for par_3 in tichonov_epsilon_wrt_sel_fun_to_test:
                 parameters_to_test_tich.append((par_1,par_2,par_3))
     N_parameters_to_test_tich = len(parameters_to_test_tich)
-    N_parameters_to_test_hsdm = len(parameters_to_test_hsdm)
+    N_parameters_to_test_hsdm = 1 # len(parameters_to_test_hsdm)
 
     for test in range(N_random_tests):
         ##########################################
@@ -97,23 +99,26 @@ if __name__ == '__main__':
             x_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, game.N_agents, game.n_opt_variables)
             dual_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, game.N_agents, game.n_shared_ineq_constr)
             aux_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, game.N_agents, game.n_shared_ineq_constr)
-            residual_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, N_iter // N_it_per_residual_computation)
-            local_cost_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, game.N_agents, N_iter // N_it_per_residual_computation)
-            sel_func_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, N_iter // N_it_per_residual_computation)
+            residual_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, (N_iter // N_it_per_residual_computation))
+            local_cost_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, game.N_agents, 1 + (N_iter // N_it_per_residual_computation))
+            sel_func_store_tich = torch.zeros(N_random_tests, N_parameters_to_test_tich, (N_iter // N_it_per_residual_computation))
             # FBF-HSDM
             x_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, game.N_agents, game.n_opt_variables)
             dual_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, game.N_agents, game.n_shared_ineq_constr)
             aux_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, game.N_agents, game.n_shared_ineq_constr)
-            residual_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, N_iter // N_it_per_residual_computation)
-            local_cost_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, game.N_agents, N_iter // N_it_per_residual_computation)
-            sel_func_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, N_iter // N_it_per_residual_computation)
+            residual_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, (N_iter // N_it_per_residual_computation))
+            local_cost_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, game.N_agents, (N_iter // N_it_per_residual_computation))
+            sel_func_store_hsdm = torch.zeros(N_random_tests, N_parameters_to_test_hsdm, (N_iter // N_it_per_residual_computation))
             # FBF
             x_store_std = torch.zeros(N_random_tests, 1, game.N_agents, game.n_opt_variables)
             dual_store_std = torch.zeros(N_random_tests, 1, game.N_agents, game.n_shared_ineq_constr)
             aux_store_std = torch.zeros(N_random_tests, 1, game.N_agents, game.n_shared_ineq_constr)
-            residual_store_std = torch.zeros(N_random_tests, 1, N_iter // N_it_per_residual_computation)
-            local_cost_store_std = torch.zeros(N_random_tests, 1, game.N_agents, N_iter // N_it_per_residual_computation)
-            sel_func_store_std = torch.zeros(N_random_tests, 1, N_iter // N_it_per_residual_computation)
+            residual_store_std = torch.zeros(N_random_tests, 1, (N_iter // N_it_per_residual_computation))
+            local_cost_store_std = torch.zeros(N_random_tests, 1, game.N_agents, (N_iter // N_it_per_residual_computation))
+            sel_func_store_std = torch.zeros(N_random_tests, 1, (N_iter // N_it_per_residual_computation))
+            # Ideal values
+            x_store_opt = torch.zeros(N_random_tests, 1, game.N_agents, game.n_opt_variables)
+            phi_store_opt = torch.zeros(N_random_tests, 1)
 
         #######################################
         #          Run Tichonov               #
@@ -129,11 +134,6 @@ if __name__ == '__main__':
             index_storage = 0
             avg_time_per_it_tich = 0
             for k in range(N_iter):
-                #  Algorithm run
-                start_time = time.time()
-                alg_tich.run_once()
-                end_time = time.time()
-                avg_time_per_it_tich = (avg_time_per_it_tich * k + (end_time - start_time)) / (k + 1)
                 if k % N_it_per_residual_computation == 0:
                     # Save performance metrics
                     x, d, a, r, c, s  = alg_tich.get_state()
@@ -142,6 +142,12 @@ if __name__ == '__main__':
                     print("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +  " Average time: " + str(avg_time_per_it_tich))
                     logging.info("Tichonov: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " +  str(s.item()) +" Average time: " + str(avg_time_per_it_tich))
                     index_storage = index_storage + 1
+                #  Algorithm run
+                start_time = time.time()
+                alg_tich.run_once()
+                end_time = time.time()
+                avg_time_per_it_tich = (avg_time_per_it_tich * k + (end_time - start_time)) / (k + 1)
+
             # Store final variables
             x, d, a, r, c, s = alg_tich.get_state()
             x_store_tich[test, index_parameter_set, :, :] = x.flatten(1)
@@ -160,11 +166,6 @@ if __name__ == '__main__':
             index_storage = 0
             avg_time_per_it_hsdm = 0
             for k in range(N_iter):
-                # Algorithm run
-                start_time = time.time()
-                alg_hsdm.run_once()
-                end_time = time.time()
-                avg_time_per_it_hsdm = (avg_time_per_it_hsdm * k + (end_time - start_time)) / (k + 1)
                 if k % N_it_per_residual_computation == 0:
                     #          Save performance metrics      #
                     x, d, a, r, c, s = alg_hsdm.get_state()
@@ -175,6 +176,12 @@ if __name__ == '__main__':
                     logging.info("HSDM: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
                         s.item()) + " Average time: " + str(avg_time_per_it_hsdm))
                     index_storage = index_storage + 1
+                # Algorithm run
+                start_time = time.time()
+                alg_hsdm.run_once()
+                end_time = time.time()
+                avg_time_per_it_hsdm = (avg_time_per_it_hsdm * k + (end_time - start_time)) / (k + 1)
+
             # Store final variables
             x, d, a, r, c, s = alg_hsdm.get_state()
             x_store_hsdm[test, index_parameter_set, :, :] = x.flatten(1)
@@ -193,29 +200,33 @@ if __name__ == '__main__':
         avg_time_per_it_hsdm = 0
         avg_time_per_it_std = 0
         for k in range(N_iter):
-            # Algorithm run
-            start_time = time.time()
-            alg_std.run_once()
-            end_time = time.time()
-            avg_time_per_it_std = (avg_time_per_it_std * k + (end_time - start_time)) / (k + 1)
             if k % N_it_per_residual_computation == 0:
                 # Save performance metrics
                 # FBF
                 x, d, a, r, c = alg_std.get_state()
-                s = game.phi(x)
+                s = game.phi(x, d, a)
                 residual_store_std[test, 0, index_storage] = r
-                sel_func_store_std[test, 0, index_storage] = game.phi(x)
+                sel_func_store_std[test, 0, index_storage] = s
                 print("FBF: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
                     s.item()) + " Average time: " + str(avg_time_per_it_std))
                 logging.info("FBF: Iteration " + str(k) + " Residual: " + str(r.item()) + " Sel function: " + str(
                     s.item()) + " Average time: " + str(avg_time_per_it_std))
                 index_storage = index_storage + 1
-            # Store final variables
-            x, d, a, r, c = alg_std.get_state()
-            x_store_std[test, 0, :, :] = x.flatten(1)
-            dual_store_std[test, 0, :, :] = d.flatten(1)
-            aux_store_std[test, 0, :, :] = a.flatten(1)
-            local_cost_store_std[test, 0, :, :] = c.flatten(1)
+            # Algorithm run
+            start_time = time.time()
+            alg_std.run_once()
+            end_time = time.time()
+            avg_time_per_it_std = (avg_time_per_it_std * k + (end_time - start_time)) / (k + 1)
+        # Store final variables
+        x, d, a, r, c = alg_std.get_state()
+        x_store_std[test, 0, :, :] = x.flatten(1)
+        dual_store_std[test, 0, :, :] = d.flatten(1)
+        aux_store_std[test, 0, :, :] = a.flatten(1)
+        local_cost_store_std[test, 0, :, :] = c.flatten(1)
+        ### Compute ideal solution -- WARNING: only useful for strictly feasible solution
+        # x_opt, phi_opt = game.computeOptimalSelection()
+        # x_store_opt[test,0,:,:] = x_opt.flatten(1)
+        # phi_store_opt[test,:] = phi_opt
 
     print("Saving results...")
     logging.info("Saving results...")
